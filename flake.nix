@@ -33,6 +33,7 @@
           };
           rust = pkgs.fenix.combine [
             toolchain.rustc
+            toolchain.rust-src
             toolchain.cargo
             toolchain.rustfmt
             toolchain.clippy

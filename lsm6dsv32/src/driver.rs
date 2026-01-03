@@ -1,12 +1,6 @@
-#![no_std]
-#![no_main]
-
-
-
-pub use crate::lsm6dsv32_config::*;
+pub use crate::config::*;
 
 use defmt::*;
-use defmt_rtt as _;
 use embassy_stm32::{
     exti::ExtiInput,
     gpio::{Output},
@@ -14,7 +8,6 @@ use embassy_stm32::{
     spi::Spi,
 };
 use embassy_time::Timer;
-use panic_probe as _;
 
 pub const EXPECTED_WHO_AM_I: u8 = 0x70;
 pub const G32_SCALE_FACTOR: f32 = 32.0 / 32768.0;
@@ -80,7 +73,7 @@ pub fn gyro_f32(scale: f32, raw: [i16; 3]) -> [f32; 3] {
 }
 
 /// Hardware layer containing peripherals and calibration offset
-pub struct lsm6dsv32_hw<'d> {
+pub struct Lsm6dsv32HW<'d> {
     spi: &'d mut Spi<'d, Async>,
     cs: &'d mut Output<'d>,
     int1: &'d mut ExtiInput<'d>,
@@ -94,7 +87,7 @@ pub struct lsm6dsv32_hw<'d> {
 
 /// Driver-Object, managing device state, configuration and hardware acces
 pub struct Lsm6dsv32<'d, F, I1, I2> {
-    hw: lsm6dsv32_hw<'d>,
+    hw: Lsm6dsv32HW<'d>,
     pub config: ImuConfig<F, I1, I2>,
 }
 
@@ -108,7 +101,7 @@ impl<'d> Lsm6dsv32<'d, FifoDisabled, Int1Disabled, Int2Disabled> {
     ) -> Self {
         let imu_config = ImuConfig::default();
 
-        let hw = lsm6dsv32_hw {
+        let hw = Lsm6dsv32HW {
             spi,
             cs,
             int1,
@@ -143,7 +136,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
             error!("Error checking WHO_AM_I register: {:?}", e);
         }
 
-        let cfg = &self.config;
+        //let cfg = &self.config;
         info!("IMU-configuration finished");
     }
 
@@ -619,7 +612,7 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoDisabled, I1, I2> {
         Lsm6dsv32 {
             hw: self.hw,
             config: ImuConfig {
-                fifo_state: crate::lsm6dsv32_config::FifoEnabled,
+                fifo_state: FifoEnabled,
                 int1_state: self.config.int1_state,
                 int2_state: self.config.int2_state,
                 general: self.config.general,
@@ -807,7 +800,7 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
         Lsm6dsv32 {
             hw: self.hw,
             config: ImuConfig {
-                fifo_state: crate::lsm6dsv32_config::FifoDisabled,
+                fifo_state: FifoDisabled,
                 int1_state: self.config.int1_state,
                 int2_state: self.config.int2_state,
                 general: self.config.general,

@@ -1,10 +1,7 @@
 #![no_std]
 #![no_main]
 
-use core::task;
-
-use LSM6DSV32::lsm6dsv32::*;
-use LSM6DSV32::lsm6dsv32_config::*;
+use lsm6dsv32::driver::*;
 use defmt::*;
 use defmt_rtt as _;
 use embassy_executor::{Spawner, task};
@@ -21,7 +18,6 @@ use embassy_stm32::{
     usart::{self, Config as UartConfig, Uart},
 };
 use embassy_time::Timer;
-use heapless::String;
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -66,7 +62,7 @@ async fn main(spawner: Spawner) {
     let mut lsm = lsm.enable_fifo().enable_interrupt1();
 
     loop {
-        lsm.wait_for_data_ready_interrupt().await;
+        lsm.wait_for_data_ready_interrupt1().await;
     }
      /*
     loop {

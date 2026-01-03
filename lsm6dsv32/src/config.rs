@@ -1,8 +1,3 @@
-#![no_std]
-#![no_main]
-
-use core::{cmp::max, str};
-
 use defmt::error;
 
 #[macro_export]
@@ -655,7 +650,7 @@ impl FifoStatusSample {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ImuSample_f32 {
+pub struct ImuSampleF32 {
     pub accel: [f32; 3],
     pub accel_ch2: [f32; 3],
     pub gyro: [f32; 3],
@@ -664,7 +659,7 @@ pub struct ImuSample_f32 {
     pub delta_ts: u64,
 }
 
-impl Default for ImuSample_f32 {
+impl Default for ImuSampleF32 {
     fn default() -> Self {
         Self {
             accel: [0f32; 3],
@@ -700,8 +695,8 @@ impl Default for ImuSample {
 }
 
 impl ImuSample {
-    pub fn create_f32(&self, scale: [f32; 3]) -> ImuSample_f32 {
-        ImuSample_f32 {
+    pub fn create_f32(&self, scale: [f32; 3]) -> ImuSampleF32 {
+        ImuSampleF32 {
             accel: self.accel.map(|val| val as f32 * scale[0]),
             accel_ch2: self.accel_ch2.map(|val| val as f32 * scale[2]),
             gyro: self.gyro.map(|val| val as f32 * scale[1]),
