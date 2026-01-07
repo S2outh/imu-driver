@@ -26,7 +26,12 @@
             date = "2025-12-22";
             sha256 = "sha256-bXz1imrwFz4Z5vlZV4jfRZWwsRma6Sk95IOuTMQFFVU=";
           };
-          lib = pkgs.fenix.targets.thumbv6m-none-eabi.toolchainOf {
+          libThumbv6 = pkgs.fenix.targets.thumbv6m-none-eabi.toolchainOf {
+            channel = "nightly";
+            date = "2025-12-22";
+            sha256 = "sha256-bXz1imrwFz4Z5vlZV4jfRZWwsRma6Sk95IOuTMQFFVU=";
+          };
+          libThumbv7 = pkgs.fenix.targets.thumbv7em-none-eabihf.toolchainOf {
             channel = "nightly";
             date = "2025-12-22";
             sha256 = "sha256-bXz1imrwFz4Z5vlZV4jfRZWwsRma6Sk95IOuTMQFFVU=";
@@ -37,7 +42,8 @@
             toolchain.cargo
             toolchain.rustfmt
             toolchain.clippy
-            lib.rust-std
+            libThumbv6.rust-std
+            libThumbv7.rust-std
           ];
         in
         pkgs.mkShell {
