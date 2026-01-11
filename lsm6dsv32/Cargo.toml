@@ -7,7 +7,7 @@ edition = "2024"
 path = "src/lib.rs"
 
 [dependencies]
-embassy-stm32 = { version = "0.4.0", features = [ "defmt", "exti"]  }
+embassy-stm32 = { version = "0.4.0", features = [ "defmt", "exti", "stm32h723vg"]  }
 embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime" ] }
 embassy-sync = { version = "0.7.2",  features = ["defmt"] }
 

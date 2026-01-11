@@ -1,20 +1,15 @@
 pub use crate::config::*;
 
 use defmt::*;
-use embassy_stm32::{
-    exti::ExtiInput,
-    gpio::{Output},
-    mode::Async,
-    spi::Spi,
-};
+use embassy_stm32::{exti::ExtiInput, gpio::Output, mode::Async, spi::Spi};
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::Timer;
-use embassy_sync::{mutex::Mutex, blocking_mutex::raw::ThreadModeRawMutex};
 
 pub const EXPECTED_WHO_AM_I: u8 = 0x70;
 pub const G32_SCALE_FACTOR: f32 = 32.0 / 32768.0;
 
-
-// encodes bitfields into a 8Bit register
+/// encodes bitfields into a 8Bit register
 #[macro_export]
 macro_rules! encode_reg8 {
     (base: $base:expr, { $($val:expr => $shift:literal, $width:literal),* $(,)? }) => {
@@ -34,48 +29,6 @@ macro_rules! encode_reg8 {
     };
 }
 
-
-/// Converts raw temp data to f32 °C
-pub fn temp_f32(raw: i16) -> f32 {
-    (raw as f32 / 256.0) + 25.0
-}
-/// Converts raw accel data to f32 physical unit using scaling factor
-/// ```rust
-/// let mut s = 10;
-/// ```
-pub fn accel_f32(scale: f32, raw: [i16; 3]) -> [f32; 3] {
-    [
-        (raw[0] as f32) * scale,
-        (raw[1] as f32) * scale,
-        (raw[2] as f32) * scale,
-    ]
-}
-
-pub fn accel_dual_f32(raw: ([i16; 3], [i16; 3]), scale: [f32; 2]) -> ([f32; 3], [f32; 3]) {
-    let raw1 = raw.0;
-    let raw2 = raw.1;
-    (
-        [
-            (raw1[0] as f32) * scale[0],
-            (raw1[1] as f32) * scale[0],
-            (raw1[2] as f32) * scale[0],
-        ],
-        [
-            (raw2[0] as f32) * scale[1],
-            (raw2[1] as f32) * scale[1],
-            (raw2[2] as f32) * scale[1],
-        ],
-    )
-}
-
-pub fn gyro_f32(scale: f32, raw: [i16; 3]) -> [f32; 3] {
-    [
-        (raw[0] as f32) * scale,
-        (raw[1] as f32) * scale,
-        (raw[2] as f32) * scale,
-    ]
-}
-
 /// Hardware layer containing peripherals and calibration offset
 pub struct Lsm6dsv32HW<'d> {
     spi: &'d Mutex<ThreadModeRawMutex, Spi<'d, Async>>,
@@ -90,7 +43,7 @@ pub struct Lsm6dsv32HW<'d> {
 
 /// Driver-Object, managing device state, configuration and hardware acces
 pub struct Lsm6dsv32<'d, F, I1, I2> {
-    hw: Lsm6dsv32HW<'d>,
+    pub hw: Lsm6dsv32HW<'d>,
     pub config: ImuConfig<F, I1, I2>,
 }
 
@@ -124,6 +77,51 @@ impl<'d> Lsm6dsv32<'d, FifoDisabled, Int1Disabled, Int2Disabled> {
 }
 
 impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
+    /// Converts raw temp data to f32 °C
+    pub fn temp_f32(raw: i16) -> f32 {
+        (raw as f32 / 256.0) + 25.0
+    }
+    /// Converts raw gyro data to f32 rad/s
+    pub fn gyro_f32(&self, raw: [i16; 3]) -> [f32; 3] {
+        raw.map(|val| val as f32 * self.config.gyro.calc_scaling_factor())
+    }
+    /// Converts dual-channel raw acceleration data to f32 m/s².
+    ///
+    /// * `raw.0`: Channel 1 raw triplets [x, y, z].
+    /// * `raw.1`: Channel 2 raw triplets [x, y, z].
+    ///
+    /// Returns: `([x, y, z] in m/s², [x, y, z] in m/s²)`
+    pub fn accel_dual_f32(&self, raw: ([i16; 3], [i16; 3])) -> ([f32; 3], [f32; 3]) {
+        let raw1 = raw.0;
+        let raw2 = raw.1;
+        (
+            raw1.map(|val| val as f32 * self.config.accel.calc_scaling_factor()),
+            raw2.map(|val| val as f32 * self.config.accel.calc_scaling_factor_ch2()),
+        )
+    }
+
+    /// Converts raw acceleration data to f32 m/s²
+    pub fn accel_f32(&self, raw: [i16; 3]) -> [f32; 3] {
+        raw.map(|val| val as f32 * self.config.accel.calc_scaling_factor())
+    }
+
+    /// Converts a raw IMU sample into SI units using f32
+    pub fn calc_imusample_f32(&self, raw_sample: ImuSample) -> ImuSampleF32 {
+        ImuSampleF32 {
+            accel: raw_sample
+                .accel
+                .map(|val| val as f32 * self.config.accel.calc_scaling_factor()),
+            accel_ch2: raw_sample
+                .accel_ch2
+                .map(|val| val as f32 * self.config.accel.calc_scaling_factor_ch2()),
+            gyro: raw_sample
+                .gyro
+                .map(|val| val as f32 * self.config.gyro.calc_scaling_factor()),
+            temp: (raw_sample.temp as f32 / 256.0) + 25.0,
+            last_ts: raw_sample.last_ts,
+            delta_ts: raw_sample.delta_ts,
+        }
+    }
 
     async fn set_config(&mut self, imu_config: ImuConfigRaw) {
         if let Err(e) = self.write_config_registers(&imu_config).await {
@@ -147,12 +145,10 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     }
 
     async fn write_config_registers(&mut self, imu_config: &ImuConfigRaw) -> Result<(), Error> {
-
         macro_rules! log_reg {
             ($name:expr, $val:expr) => {
                 #[cfg(feature = "debug")]
                 debug!("{}: {:08b}", $name, $val);
-                
             };
             ($name:expr, $old:expr, $new:expr) => {
                 #[cfg(feature = "debug")]
@@ -340,6 +336,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         let mut buffer = [cmd, val];
         self.hw.cs.set_low();
         let mut spi = self.hw.spi.lock().await;
+        let spi: &mut Spi<'_, Async> = &mut spi;
         spi.transfer_in_place(&mut buffer)
             .await
             .map_err(|e| Error::Spi(e))?;
@@ -356,7 +353,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
 
         self.hw.cs.set_low();
         let mut spi = self.hw.spi.lock().await;
-    
+        let spi: &mut Spi<'_, Async> = &mut spi;
+
         spi.transfer_in_place(&mut buffer)
             .await
             .map_err(|e| Error::Spi(e))?;
@@ -379,6 +377,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
 
         self.hw.cs.set_low();
         let mut spi = self.hw.spi.lock().await;
+        let spi: &mut Spi<'_, Async> = &mut spi;
         spi.transfer_in_place(&mut buffer[..n])
             .await
             .map_err(Error::Spi)?;
@@ -387,7 +386,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         data.copy_from_slice(&buffer[1..n]);
         Ok(())
     }
-
+    /// Reads raw acceleration data from both channels
+    /// Applies hardware bias offsets and returns (ch1, ch2) triplets
     pub async fn read_accel_dual_raw(&mut self) -> Result<([i16; 3], [i16; 3]), Error> {
         if self.config.accel.dual_channel == false || self.config.accel.odr == AccelODR::PowerDown {
             error!(
@@ -415,6 +415,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         Ok((res1, res2))
     }
 
+    /// Reads raw acceleration data and applies hardware bias offset
     pub async fn read_accel_raw(&mut self) -> Result<[i16; 3], Error> {
         if self.config.accel.odr == AccelODR::PowerDown {
             error!("Accel reading requested but accel is powered down");
@@ -429,6 +430,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         Ok([ax, ay, az])
     }
 
+    /// Reads raw gyro data and applies hardware bias offset
     pub async fn read_gyro_raw(&mut self) -> Result<[i16; 3], Error> {
         if self.config.gyro.odr == GyroODR::PowerDown {
             error!("Gyro reading requested but gyro is powered down");
@@ -443,6 +445,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         Ok([gx, gy, gz])
     }
 
+    /// Reads raw temperature data
     pub async fn read_temp_raw(&mut self) -> Result<i16, Error> {
         let mut data = [0u8; 2];
         self.read_multi_registers(Register::OUT_TEMP_L as u8, &mut data)
@@ -451,6 +454,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         Ok(temp)
     }
 
+    /// Reads raw timestamp data
     async fn read_timestamp_raw(&mut self) -> Result<u32, Error> {
         let mut data = [0u8; 4];
         self.read_multi_registers(Register::TIMESTAMP0 as u8, &mut data)
@@ -466,7 +470,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
             temp: (status & 0b0000_0100) != 0,
         })
     }
-
+    /// Reads and scales timestamp to ns and applies hardware offset
     pub async fn read_timestamp(&mut self) -> Result<u64, Error> {
         if self.config.general.timestamp_enabled == false {
             error!("Timestamp reading requested but timestamp is disabled");
@@ -476,14 +480,30 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         Ok((raw - self.hw.ts_offset) as u64 * 21750)
     }
 
-    pub fn calc_scaling(&mut self, unit_scale: UnitScale) -> [f32; 3] {
-        [
-            self.config.accel.calc_scaling_factor(unit_scale),
-            self.config.gyro.calc_scaling_factor(unit_scale),
-            (G32_SCALE_FACTOR * unit_scale.as_f32()),
-        ]
-    }
-
+    /// Polls the status register until the specified sensor data is ready.
+    ///
+    /// ### Logic Modes:
+    /// - [`LogicOp::AND`]: Waits until **all** selected sensors have new data.
+    /// - [`LogicOp::OR`]: Waits until **at least one** of the selected sensors has new data.
+    ///
+    /// ### Parameters:
+    /// - `accel`, `gyro`, `temp`: Selection of sensors to monitor.
+    /// - `mode`: The [`LogicOp`] applied to the status bits.
+    /// - `delay_us`: Polling interval (µs) to manage bus load and power.
+    ///
+    /// ### Return Type: [`Option<ReadySRC>`]
+    /// Returns `Some` containing a [`ReadySRC`] struct with the **actual** status
+    /// of each sensor
+    ///
+    /// ### Example:
+    /// ```rust
+    /// // Wait for ANY data to be ready
+    /// if let Some(src) = imu.wait_for_data_ready_polling(true, true, false, LogicOp::OR, 500).await {
+    ///     if src.gyro {
+    ///         let g = imu.read_gyro_raw().await?;
+    ///     }
+    /// }
+    /// ```
     pub async fn wait_for_data_ready_polling(
         &mut self,
         accel: bool,
@@ -537,6 +557,35 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         }
     }
 
+    /// Orchestrates data polling and execution of a user callback.
+    ///
+    /// - **Polling**: Uses [`wait_for_data_ready_polling`](Self::wait_for_data_ready_polling) with [`LogicOp`]
+    /// - **Auto-Retrieval**: Fetches [`ImuSample`] data based on `data_ready` flags
+    /// - **Closure**: Executes `on_sample` with the populated sample
+    ///
+    /// ### Parameters
+    /// - `accel`, `gyro`, `temp`: Sensors to monitor and read.
+    /// - `ts`: If `true`, includes a timestamp in the sample via [`read_timestamp`](Self::read_timestamp).
+    /// - `delay_us`: Polling interval in microseconds.
+    /// - `mode`: The [`LogicOp`] (AND/OR) used to trigger the read.
+    /// - `on_sample`: A closure that implements `FnMut(ImuSample)` handeling the resulting data.
+    ///
+    /// ### Returns
+    /// - `Ok(())` if the poll was successful and the callback was executed.
+    /// - `Err(Error::NoValue)` if the polling condition was not met or parameters were invalid.
+    ///
+    /// ### Example: Logging Accel and Gyro data
+    /// ```rust
+    /// imu.read_data_when_ready_polling(
+    ///     true, true, false, // Accel & Gyro
+    ///     true,              // Include timestamp
+    ///     1000,              // Check every 1ms
+    ///     LogicOp::AND,      // Wait until BOTH are ready
+    ///     |sample| {
+    ///         info!("New Sample at {}: Accel={:?}, Gyro={:?}", sample.last_ts, sample.accel, sample.gyro);
+    ///     }
+    /// ).await?;
+    /// ```
     pub async fn read_data_when_ready_polling<F>(
         &mut self,
         accel: bool,
@@ -585,23 +634,24 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         Ok(())
     }
 
+    /// Syncs the internal time reference to the current sensor timestamp.
+    /// Sets [`ts_offset`](Self::hw) to align future reads with this point in time.
     pub async fn reset_timer(&mut self) {
         info!("Resetting timestamp timer");
         self.hw.ts_offset = self.read_timestamp_raw().await.unwrap_or(0);
     }
 
+    /// Finalizes and applies all cached settings to the physical device.
+    /// Builds the configuration bitmask and writes it to the sensor registers.
     pub async fn commit_config(&mut self) {
         if let Err(e) = self.write_config_registers(&self.config.build()).await {
             error!("Error committing config: {:?}", e);
         }
     }
-
-    pub fn config_general(&mut self, config: GenerelConfig) {
-        self.config.general = config;
-    }
 }
 
 impl<'d, I1, I2> Lsm6dsv32<'d, FifoDisabled, I1, I2> {
+    /// Enables Fifo by consuming `self` and changing state to [`FifoEnabled`]
     pub fn enable_fifo(self) -> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
         Lsm6dsv32 {
             hw: self.hw,
@@ -622,12 +672,22 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoDisabled, I1, I2> {
 }
 
 impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
+    /// Returns the current FIFO status as [`FifoStatusSample`]
     pub async fn read_fifo_status(&mut self) -> Result<FifoStatusSample, Error> {
         let fifo_status1 = self.read_register(Register::FIFO_STATUS1 as u8).await?;
         let fifo_status2 = self.read_register(Register::FIFO_STATUS2 as u8).await?;
         Ok(FifoStatusSample::from_registers(fifo_status1, fifo_status2))
     }
 
+    /// Waits until a specific FIFO condition is met.
+    ///
+    /// This function polls [`read_fifo_status`](Self::read_fifo_status) in a loop until the
+    /// hardware signals that the requested [`FifoTrigger`] has been reached.
+    ///
+    /// ### Triggers:
+    /// - [`FifoTrigger::Counter`]: Waits for a specific number of samples of one sensor (set in config).
+    /// - [`FifoTrigger::Watermark`]: Waits until the fill level reaches the watermark threshold.
+    /// - [`FifoTrigger::Full`]: Waits until the FIFO is completely saturated.
     pub async fn fifo_wait_for_polling(&mut self, trigger: FifoTrigger, delay_us: u64) {
         loop {
             let status = match self.read_fifo_status().await {
@@ -667,6 +727,20 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
         }
     }
 
+    /// Orchestrates a complete FIFO readout cycle using polling.
+    ///
+    /// 1. **Wait**: Polls until the [`FifoTrigger`] is reached.
+    /// 2. **Burst Read**: Transfers raw data packets via SPI in a single transaction.
+    /// 3. **Parsing**: Decodes 7-byte tags (Gyro, Accel, Temp, TS, Dual-CH).
+    /// 4. **Callbacks**: Emits [`ImuSample`] via `on_sample` and temperature via `on_temp`.
+    ///
+    /// ### Example
+    /// ```rust
+    /// imu.fifo_read_data_polling(FifoTrigger::Watermark, 1000, false,
+    ///     |s| info!("Sample: {:?}", s),
+    ///     Some(|t| info!("Temp: {}", t))
+    /// ).await?;
+    /// ```
     pub async fn fifo_read_data_polling<F, G>(
         &mut self,
         trigger: FifoTrigger,
@@ -758,6 +832,10 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
         }
     }
 
+    /// Performs a high-speed SPI burst read from the FIFO data output register.
+    ///
+    /// - **Efficiency**: Minimizes CS toggling by reading the entire buffer in one go.
+    /// - **Buffer**: Expects a mutable data array (e.g., 210 bytes for 30 samples).
     async fn read_fifo_burst(&mut self, data: &mut [u8]) -> Result<(), Error> {
         const READ_BIT: u8 = 0x80;
         const FIFO_DATA_OUT_TAG: u8 = 0x78;
@@ -766,6 +844,7 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
         self.hw.cs.set_low();
         let mut cmd_buf = [cmd];
         let mut spi = self.hw.spi.lock().await;
+        let spi: &mut Spi<'_, Async> = &mut spi;
         spi.transfer_in_place(&mut cmd_buf)
             .await
             .map_err(Error::Spi)?;
@@ -773,14 +852,12 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
         for byte in data.iter_mut() {
             *byte = 0;
         }
-        spi.transfer_in_place(data)
-            .await
-            .map_err(Error::Spi)?;
+        spi.transfer_in_place(data).await.map_err(Error::Spi)?;
 
         self.hw.cs.set_high();
         Ok(())
     }
-
+    /// Consumes the driver to disable FIFO mode, resetting the state to [`FifoDisabled`]
     pub fn disable_fifo(self) -> Lsm6dsv32<'d, FifoDisabled, I1, I2> {
         Lsm6dsv32 {
             hw: self.hw,
@@ -801,6 +878,7 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
 }
 
 impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Disabled, I2> {
+    /// Enables interrupt1 by consuming `self` and changing state to [`Int1Enabled`]
     pub fn enable_interrupt1(self) -> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
         Lsm6dsv32 {
             hw: self.hw,
@@ -821,6 +899,7 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Disabled, I2> {
 }
 
 impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Disabled> {
+    /// Enables interrupt2 by consuming `self` and changing state to [`Int2Enabled`]
     pub fn enable_interrupt2(self) -> Lsm6dsv32<'d, FI, I1, Int2Enabled> {
         Lsm6dsv32 {
             hw: self.hw,
@@ -841,6 +920,10 @@ impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Disabled> {
 }
 
 impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
+    /// Waits until the INT1 pin signals that data is ready
+    ///
+    /// - **Hardware-Driven**: Suspends the task until an edge (rising/falling) is detected on INT1
+    /// - **Logic**: Returns [`ReadySRC`] once the [`LogicOp`] condition matches the status register
     pub async fn wait_for_data_ready_interrupt1(
         &mut self,
         accel: bool,
@@ -863,12 +946,10 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
                 self.hw.int1.wait_for_rising_edge().await;
                 #[cfg(feature = "debug")]
                 debug!("Interrupt erkannt")
-                
             } else {
                 self.hw.int1.wait_for_falling_edge().await;
                 #[cfg(feature = "debug")]
                 debug!("Interrupt erkannt")
-                
             }
             let status = self.read_status_reg().await?;
 
@@ -896,6 +977,18 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
         }
     }
 
+    /// High-level orchestrator for interrupt-driven data acquisition.
+    ///
+    /// - **Wait**: Uses [`wait_for_data_ready_interrupt1`](Self::wait_for_data_ready_interrupt1).
+    /// - **Callback**: Reads data into an [`ImuSample`] and triggers the `on_sample` callback.
+    ///
+    /// ### Example
+    /// ```rust
+    /// // Wake up on INT1 and process Accel/Gyro data
+    /// imu.read_data_when_ready_interrupt1(true, true, false, true, LogicOp::AND, |s| {
+    ///     do_something(s);
+    /// }).await?;
+    /// ```
     pub async fn read_data_when_ready_interrupt1<F>(
         &mut self,
         accel: bool,
@@ -939,8 +1032,11 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
     }
 }
 
-
 impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Enabled> {
+    /// Waits until the INT2 pin signals that data is ready
+    ///
+    /// - **Hardware-Driven**: Suspends the task until an edge (rising/falling) is detected on INT2
+    /// - **Logic**: Returns [`ReadySRC`] once the [`LogicOp`] condition matches the status register
     pub async fn wait_for_data_ready_interrupt2(
         &mut self,
         accel: bool,
@@ -994,6 +1090,18 @@ impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Enabled> {
         }
     }
 
+    /// High-level orchestrator for interrupt-driven data acquisition.
+    ///
+    /// - **Wait**: Uses [`wait_for_data_ready_interrupt2`](Self::wait_for_data_ready_interrupt2).
+    /// - **Callback**: Reads data into an [`ImuSample`] and triggers the `on_sample` callback.
+    ///
+    /// ### Example
+    /// ```rust
+    /// // Wake up on INT1 and process Accel/Gyro data
+    /// imu.read_data_when_ready_interrupt2(true, true, false, true, LogicOp::AND, |s| {
+    ///     do_something(s);
+    /// }).await?;
+    /// ```
     pub async fn read_data_when_ready_interrupt2<F>(
         &mut self,
         accel: bool,
@@ -1036,6 +1144,3 @@ impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Enabled> {
         Ok(())
     }
 }
-
-
-
