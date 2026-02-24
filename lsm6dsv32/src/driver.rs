@@ -228,7 +228,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
 
         let pin_ctrl_old = self.read_register(Register::PIN_CTRL as u8).await?;
         let pin_ctrl = encode_reg8!(base: pin_ctrl_old, {
-            1 => 0, 2,
+            3 => 0, 2,
             1 => 5, 1,
             imu_config.general.sdo_pull_up as u8 => 6, 1,
             0 => 7, 1
@@ -1013,11 +1013,11 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
         }
         loop {
             if self.config.general.interrupt_lvl == false {
-                self.hw.int1.wait_for_rising_edge().await;
+                self.hw.int1.wait_for_high().await;
                 #[cfg(feature = "debug")]
                 debug!("Interrupt erkannt")
             } else {
-                self.hw.int1.wait_for_falling_edge().await;
+                self.hw.int1.wait_for_low().await;
                 #[cfg(feature = "debug")]
                 debug!("Interrupt erkannt")
             }
@@ -1126,11 +1126,11 @@ impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Enabled> {
         }
         loop {
             if self.config.general.interrupt_lvl == false {
-                self.hw.int2.wait_for_rising_edge().await;
+                self.hw.int2.wait_for_high().await;
                 #[cfg(feature = "debug")]
                 debug!("Interrupt erkannt")
             } else {
-                self.hw.int2.wait_for_falling_edge().await;
+                self.hw.int2.wait_for_low().await;
                 #[cfg(feature = "debug")]
                 debug!("Interrupt erkannt")
             }
