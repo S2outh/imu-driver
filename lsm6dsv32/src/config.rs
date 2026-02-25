@@ -1,5 +1,5 @@
 use core::f32::consts::PI;
-
+use core::convert::TryFrom;
 use defmt::error;
 
 /// creates marker structs for the different states of the driver
@@ -75,6 +75,49 @@ pub enum Register {
     HAODR_CFG = 0x62,
     FIFO_DATA_OUT_TAG = 0x78,
     FIFO_DATA_OUT_X_L = 0x79,
+}
+
+impl TryFrom<u8> for Register {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x02 => Ok(Register::PIN_CTRL),
+            0x03 => Ok(Register::IF_CTRL),
+            0x07 => Ok(Register::FIFO_CTRL1),
+            0x09 => Ok(Register::FIFO_CTRL3),
+            0x0A => Ok(Register::FIFO_CTRL4),
+            0x0B => Ok(Register::COUNTER_BDR_REG1),
+            0x0C => Ok(Register::COUNTER_BDR_REG2),
+            0x0D => Ok(Register::INT1_CTRL),
+            0x0E => Ok(Register::INT2_CTRL),
+            0x0F => Ok(Register::WHO_AM_I),
+            0x10 => Ok(Register::CTRL1),
+            0x11 => Ok(Register::CTRL2),
+            0x13 => Ok(Register::CTRL4),
+            0x15 => Ok(Register::CTRL6),
+            0x16 => Ok(Register::CTRL7),
+            0x17 => Ok(Register::CTRL8),
+            0x18 => Ok(Register::CTRL9),
+            0x1B => Ok(Register::FIFO_STATUS1),
+            0x1C => Ok(Register::FIFO_STATUS2),
+            0x1E => Ok(Register::STATUS_REG),
+            0x20 => Ok(Register::OUT_TEMP_L),
+            0x22 => Ok(Register::OUTX_L_G),
+            0x28 => Ok(Register::OUTX_L_A),
+            0x2E => Ok(Register::UI_OUTX_L_G_OIS_EIS),
+            0x34 => Ok(Register::UI_OUTX_L_A_OIS_DUAL_C),
+            0x40 => Ok(Register::TIMESTAMP0),
+            0x50 => Ok(Register::FUNCTIONS_ENABLE),
+            0x5E => Ok(Register::MD1_CFG),
+            0x5F => Ok(Register::MD2_CFG),
+            0x63 => Ok(Register::EMB_FUNC_CFG),
+            0x62 => Ok(Register::HAODR_CFG),
+            0x78 => Ok(Register::FIFO_DATA_OUT_TAG),
+            0x79 => Ok(Register::FIFO_DATA_OUT_X_L),
+            _ => Err(()),
+        }
+    }
 }
 
 /// Internal storage for all sensor settings without states used for writing hardware registers
