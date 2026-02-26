@@ -564,6 +564,27 @@ pub enum GyroODR {
     KHz3_84 = 0b1011,
     KHz7_68 = 0b1100,
 }
+
+impl GyroODR {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0b0000 => Some(GyroODR::PowerDown),
+            0b0010 => Some(GyroODR::Hz7_5),
+            0b0011 => Some(GyroODR::Hz15),
+            0b0100 => Some(GyroODR::Hz30),
+            0b0101 => Some(GyroODR::Hz60),
+            0b0110 => Some(GyroODR::Hz120),
+            0b0111 => Some(GyroODR::Hz240),
+            0b1000 => Some(GyroODR::Hz480),
+            0b1001 => Some(GyroODR::Hz960),
+            0b1010 => Some(GyroODR::KHz1_92),
+            0b1011 => Some(GyroODR::KHz3_84),
+            0b1100 => Some(GyroODR::KHz7_68),
+            _ => None, 
+        }
+    }
+}
+
 /// Selection of gyro Low Pass Filter 1 bandwidths
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 #[repr(u8)]
@@ -651,6 +672,27 @@ pub enum AccelODR {
     KHz1_92 = 0b1010,
     KHz3_84 = 0b1011,
     KHz7_68 = 0b1100,
+}
+
+impl AccelODR {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0b0000 => Some(AccelODR::PowerDown),
+            0b0001 => Some(AccelODR::Hz1_875), 
+            0b0010 => Some(AccelODR::Hz7_5),
+            0b0011 => Some(AccelODR::Hz15),
+            0b0100 => Some(AccelODR::Hz30),
+            0b0101 => Some(AccelODR::Hz60),
+            0b0110 => Some(AccelODR::Hz120),
+            0b0111 => Some(AccelODR::Hz240),
+            0b1000 => Some(AccelODR::Hz480),
+            0b1001 => Some(AccelODR::Hz960),
+            0b1010 => Some(AccelODR::KHz1_92),
+            0b1011 => Some(AccelODR::KHz3_84),
+            0b1100 => Some(AccelODR::KHz7_68),
+            _ => None, 
+        }
+    }
 }
 /// Selection of accelerometer Filter bandwidths for both lp and hp
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
