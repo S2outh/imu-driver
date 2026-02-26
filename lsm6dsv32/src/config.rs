@@ -609,6 +609,19 @@ pub enum GyroFS {
     DPS2000 = 0b0100,
     DPS4000 = 0b1100,
 }
+impl GyroFS {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0b0000 => Some(GyroFS::DPS125),
+            0b0001 => Some(GyroFS::DPS250),
+            0b0010 => Some(GyroFS::DPS500),
+            0b0011 => Some(GyroFS::DPS1000),
+            0b0100 => Some(GyroFS::DPS2000),
+            0b1100 => Some(GyroFS::DPS4000),
+            _ => None, 
+        }
+    }
+}
 /// Gyro power and precision modes
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 #[repr(u8)]
@@ -715,6 +728,17 @@ pub enum AccelFS {
     G8 = 0b01,
     G16 = 0b10,
     G32 = 0b11,
+}
+impl AccelFS {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0b00 => Some(AccelFS::G4),
+            0b01 => Some(AccelFS::G8),
+            0b10 => Some(AccelFS::G16),
+            0b11 => Some(AccelFS::G32),
+            _ => None, 
+        }
+    }
 }
 /// Accelerometer Power and Performance-Modes
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
