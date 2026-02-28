@@ -608,7 +608,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "critical-section",
- "defmt 1.0.1",
+ "defmt 0.3.100",
  "defmt-rtt",
  "embassy-executor",
  "embassy-futures",
