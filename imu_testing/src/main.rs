@@ -1,15 +1,22 @@
 #![no_std]
 #![no_main]
 
-use lsm6dsv32::driver::*;
 use defmt::*;
 use defmt_rtt as _;
 use embassy_executor::{Spawner, task};
 use embassy_stm32::{
-    Config, Peri, bind_interrupts, exti::{self, ExtiInput}, gpio::{Level, Output, Pull, Speed}, interrupt::{typelevel::EXTI9_5}, mode::Async, peripherals, rcc, spi::{self, Mode, Phase, Polarity, Spi, mode::Master as Spi_Master}, time::Hertz
+    Config, Peri, bind_interrupts,
+    exti::{self, ExtiInput},
+    gpio::{Level, Output, Pull, Speed},
+    interrupt::typelevel::EXTI9_5,
+    mode::Async,
+    peripherals, rcc,
+    spi::{self, Mode, Phase, Polarity, Spi, mode::Master as Spi_Master},
+    time::Hertz,
 };
-use embassy_sync::{mutex::Mutex, blocking_mutex::raw::ThreadModeRawMutex};
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
 use embassy_time::Timer;
+use lsm6dsv32::driver::*;
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -49,7 +56,8 @@ async fn main(spawner: Spawner) {
         phase: Phase::CaptureOnFirstTransition, // CPHA=0
     }; // => SPI Mode 0
 
-    static SPI: StaticCell<Mutex<ThreadModeRawMutex,Spi<'static, Async, Spi_Master>>> = StaticCell::new();
+    static SPI: StaticCell<Mutex<ThreadModeRawMutex, Spi<'static, Async, Spi_Master>>> =
+        StaticCell::new();
 
     let spi = Spi::new(
         p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA2_CH3, p.DMA2_CH2, spi_config,
@@ -59,26 +67,30 @@ async fn main(spawner: Spawner) {
 
     let spi = SPI.init(spi_mutex);
 
-    let cs =  Output::new(p.PB1, Level::High, Speed::High);
+    let cs = Output::new(p.PB1, Level::High, Speed::High);
 
-    let int1 =ExtiInput::new(p.PA9, p.EXTI9, Pull::Down, Irqs);
+    let int1 = ExtiInput::new(p.PA9, p.EXTI9, Pull::Down, Irqs);
 
     let int2 = ExtiInput::new(p.PA8, p.EXTI8, Pull::Down, Irqs);
 
     let mut lsm = Lsm6dsv32::new(spi, cs, int1, int2).await;
-    lsm.config.use_high_accuracy_mode(HighAccuracyODR::Standard);   
+    lsm.config.use_high_accuracy_mode(HighAccuracyODR::Standard);
     lsm.config.accel.dual_channel = true;
     let _ = lsm.config.accel.set_odr(AccelODR::KHz1_92);
     lsm.config.accel.full_scale = AccelFS::G8;
     lsm.config.gyro.full_scale = GyroFS::DPS500;
 
-    lsm.commit_config().await;
+    loop {
+        lsm.commit_config().await;
+
+        Timer::after_secs(20).await;
+    }
 
     spawner.spawn(send_iterupt(p.PB5)).unwrap();
 
-     /*
+    /*
     loop {
-           
+
         if let Err(e) = lsm
             .read_data_when_ready_polling(true, false, false, true, 10, LogicOp::OR, |s_raw| {
                 let s = s_raw.create_f32(scale);
@@ -91,7 +103,7 @@ async fn main(spawner: Spawner) {
         {
             error!("Fehler");
         }
-    
+
          let status = lsm.read_fifo_status().await.unwrap_or_else(|e|{error!("Fehler beim Lesen {:?}",e); FifoStatusSample::from_registers(0,   0)});
          info!("{}",status.unread_samples)
 
@@ -109,7 +121,7 @@ async fn main(spawner: Spawner) {
              info!("TEMP UPDATE -> {} °C", temp_f32(t));
              })
          ).await.unwrap_or_else(|e| error!("FIFO Error: {:?}", e));
-       
+
     }
      */
 }
@@ -118,7 +130,7 @@ async fn main(spawner: Spawner) {
 pub async fn send_iterupt(pin: Peri<'static, peripherals::PB5>) {
     let mut sim_int_pin = Output::new(pin, Level::Low, Speed::Medium);
     info!("Test");
-    loop{
+    loop {
         Timer::after_secs(5).await;
         sim_int_pin.set_high();
         info!("Int-Pin HIGH");
