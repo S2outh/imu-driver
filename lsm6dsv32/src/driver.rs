@@ -1,7 +1,12 @@
 pub use crate::config::*;
 
 use defmt::*;
-use embassy_stm32::{exti::ExtiInput, gpio::Output, mode::Async, spi::{Spi, mode::Master}};
+use embassy_stm32::{
+    exti::ExtiInput,
+    gpio::Output,
+    mode::Async,
+    spi::{Spi, mode::Master},
+};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::Timer;
@@ -123,20 +128,22 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         }
     }
     /// Coordinates the full stationary calibration for all enabled sensor channels (Z-Axis facing up)
-    /// 
+    ///
     /// Logged Output data can also be hardcoded later using [`set_hardware_offsets`](Self::set_hardware_offsets)
-    pub async fn calibrate(&mut self) -> Result<(),Error> {
+    pub async fn calibrate(&mut self) -> Result<(), Error> {
         info!("Starting calibration...");
         self.calibrate_accel().await?;
         info!("Accel-Bias: {:?}", self.hw.bias_accel);
-        if self.config.accel.dual_channel {info!("Accel-Bias channel 2: {:?}", self.hw.bias_accel_ch2);}
+        if self.config.accel.dual_channel {
+            info!("Accel-Bias channel 2: {:?}", self.hw.bias_accel_ch2);
+        }
 
         self.calibrate_gyro().await?;
         info!("Gyro-Bias: {:?}", self.hw.bias_gyro);
         Ok(())
     }
     /// Manually sets pre-calculated hardware bias offsets bypassing the calibration via [`calibrate`](Self::calibrate)
-    pub fn set_hardware_offsets(&mut self, accel: [i16;3], accel_ch2: [i16;3], gyro: [i16;3]) {
+    pub fn set_hardware_offsets(&mut self, accel: [i16; 3], accel_ch2: [i16; 3], gyro: [i16; 3]) {
         self.hw.bias_accel = accel;
         self.hw.bias_accel_ch2 = accel_ch2;
         self.hw.bias_gyro = gyro;
@@ -206,7 +213,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         info!("IMU-configuration finished");
     }
 
-    async fn check_who_i_am(&mut self) -> Result<(), Error> {
+    pub async fn check_who_i_am(&mut self) -> Result<(), Error> {
         let who_am_i_data = self.read_register(Register::WHO_AM_I as u8).await?;
         if who_am_i_data != EXPECTED_WHO_AM_I {
             return Err(Error::WrongWhoAmI(who_am_i_data));
@@ -419,21 +426,42 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         const READ_BIT: u8 = 0x80;
         let cmd = reg | READ_BIT;
 
-        let mut buffer = [cmd, 0x00];
+        #[cfg(not(feature = "simulation"))]
+        {
+            let mut buffer = [cmd, 0x00];
 
-        self.hw.cs.set_low();
-        let mut spi = self.hw.spi.lock().await;
-        let spi: &mut Spi<'_, Async, Master> = &mut spi;
+            self.hw.cs.set_low();
+            let mut spi = self.hw.spi.lock().await;
+            let spi: &mut Spi<'_, Async, Master> = &mut spi;
 
-        spi.transfer_in_place(&mut buffer)
-            .await
-            .map_err(|e| Error::Spi(e))?;
-        self.hw.cs.set_high();
+            spi.transfer_in_place(&mut buffer)
+                .await
+                .map_err(|e| Error::Spi(e))?;
+            self.hw.cs.set_high();
 
-        if buffer.len() < 1 {
-            return Err(Error::NoValue);
-        } else {
-            Ok(buffer[1])
+            if buffer.len() < 1 {
+                return Err(Error::NoValue);
+            } else {
+                Ok(buffer[1])
+            }
+        }
+        #[cfg(feature = "simulation")]
+        {
+            let cmd_buf = [cmd];
+            let mut data_buf = [0u8; 1];
+
+            self.hw.cs.set_low();
+            let mut spi = self.hw.spi.lock().await;
+            let spi: &mut Spi<'_, Async, Master> = &mut spi;
+
+            // Phase 1: Sending command-line
+            spi.write(&cmd_buf).await.map_err(|e| Error::Spi(e))?;
+            Timer::after_micros(50).await;
+            // Phase 2: Reading Data Byte
+            spi.read(&mut data_buf).await.map_err(|e| Error::Spi(e))?;
+
+            self.hw.cs.set_high();
+            Ok(data_buf[0])
         }
     }
 
@@ -441,20 +469,43 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         const READ_BIT: u8 = 0x80;
         let cmd = start_reg | READ_BIT;
 
-        let mut buffer = [0u8; 141]; //max 141 Bytes data = 20 FifoSamples
-        let n = 1 + data.len();
-        buffer[0] = cmd;
+        #[cfg(not(feature = "simulation"))]
+        {
+            let mut buffer = [0u8; 141]; //max 141 Bytes data = 20 FifoSamples
+            let n = 1 + data.len();
+            buffer[0] = cmd;
 
-        self.hw.cs.set_low();
-        let mut spi = self.hw.spi.lock().await;
-        let spi: &mut Spi<'_, Async, Master> = &mut spi;
-        spi.transfer_in_place(&mut buffer[..n])
-            .await
-            .map_err(Error::Spi)?;
-        self.hw.cs.set_high();
+            self.hw.cs.set_low();
+            let mut spi = self.hw.spi.lock().await;
+            let spi: &mut Spi<'_, Async, Master> = &mut spi;
+            spi.transfer_in_place(&mut buffer[..n])
+                .await
+                .map_err(Error::Spi)?;
+            self.hw.cs.set_high();
 
-        data.copy_from_slice(&buffer[1..n]);
-        Ok(())
+            data.copy_from_slice(&buffer[1..n]);
+            Ok(())
+        }
+
+        #[cfg(feature = "simulation")]
+        {
+            let cmd_buf = [cmd];
+
+            self.hw.cs.set_low();
+            let mut spi = self.hw.spi.lock().await;
+            let spi: &mut Spi<'_, Async, Master> = &mut spi;
+
+            // Phase 1: Sending command-line
+            spi.write(&cmd_buf).await.map_err(|e| Error::Spi(e))?;
+
+            embassy_time::Timer::after_micros(50).await;
+
+            // Phase 2: Reading Data Bytes
+            spi.read(data).await.map_err(|e| Error::Spi(e))?;
+
+            self.hw.cs.set_high();
+            Ok(())
+        }
     }
     /// Reads raw acceleration data from both channels
     /// Applies hardware bias offsets and returns (ch1, ch2) triplets

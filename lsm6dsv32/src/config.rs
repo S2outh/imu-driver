@@ -548,7 +548,7 @@ pub enum IntMode {
 }
 
 /// Gyro Output-Data-Rate
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
 #[repr(u8)]
 pub enum GyroODR {
     PowerDown = 0b0000,
@@ -599,7 +599,7 @@ pub enum GyroLpf1 {
     UltraNarrow = 0b111,
 }
 /// Selection of gyro Full-Scale range in dps
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
 #[repr(u8)]
 pub enum GyroFS {
     DPS125 = 0b0000,
@@ -669,7 +669,7 @@ impl GyroBatchDataRate {
     }
 }
 /// Accelerometer Output-Data-Rate
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
 #[repr(u8)]
 pub enum AccelODR {
     PowerDown = 0b0000,
@@ -721,7 +721,7 @@ pub enum AccelFilterBW {
     OdrDiv800 = 0b111,
 }
 /// Selection of accelerometer full-scale range in g
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
 #[repr(u8)]
 pub enum AccelFS {
     G4 = 0b00,

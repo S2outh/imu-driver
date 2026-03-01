@@ -82,7 +82,21 @@ async fn main(spawner: Spawner) {
 
     loop {
         lsm.commit_config().await;
+        if let Err(e) = lsm.check_who_i_am().await {
+            defmt::error!("WHO_AM_I Check failed: {:?}", e);
 
+            // Optional: Spezifische Reaktion auf den Fehler
+            match e {
+                Error::WrongWhoAmI(val) => {
+                    defmt::warn!("Sensor responded with 0x{:02x} instead of 0x70", val)
+                }
+                Error::Spi(_) => defmt::error!("Hardware/Timing problem on SPI bus"),
+                _ => {}
+            }
+            // Hier könntest du z.B. den Task neu starten oder in einen Fehlerzustand gehen
+        } else {
+            defmt::info!("WHO_AM_I check successful!");
+        }
         Timer::after_secs(20).await;
     }
 

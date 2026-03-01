@@ -19,3 +19,4 @@ debug = 2
 [features]
 default = []
 debug = []
+simulation = []
