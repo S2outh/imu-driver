@@ -90,7 +90,7 @@ async fn main(spawner: Spawner) {
                 Error::WrongWhoAmI(val) => {
                     defmt::warn!("Sensor responded with 0x{:02x} instead of 0x70", val)
                 }
-                Error::Spi(_) => defmt::error!("Hardware/Timing problem on SPI bus"),
+                Error::Spi => defmt::error!("Hardware/Timing problem on SPI bus"),
                 _ => {}
             }
             // Hier könntest du z.B. den Task neu starten oder in einen Fehlerzustand gehen

@@ -416,7 +416,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         let spi: &mut Spi<'_, Async, Master> = &mut spi;
         spi.transfer_in_place(&mut buffer)
             .await
-            .map_err(|e| Error::Spi(e))?;
+            .map_err(|_| Error::Spi)?;
         self.hw.cs.set_high();
 
         Ok(())
@@ -436,7 +436,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
 
             spi.transfer_in_place(&mut buffer)
                 .await
-                .map_err(|e| Error::Spi(e))?;
+                .map_err(|_| Error::Spi)?;
             self.hw.cs.set_high();
 
             if buffer.len() < 1 {
@@ -455,10 +455,10 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
             let spi: &mut Spi<'_, Async, Master> = &mut spi;
 
             // Phase 1: Sending command-line
-            spi.write(&cmd_buf).await.map_err(|e| Error::Spi(e))?;
+            spi.write(&cmd_buf).await.map_err(|_| Error::Spi)?;
             Timer::after_micros(50).await;
             // Phase 2: Reading Data Byte
-            spi.read(&mut data_buf).await.map_err(|e| Error::Spi(e))?;
+            spi.read(&mut data_buf).await.map_err(|_| Error::Spi)?;
 
             self.hw.cs.set_high();
             Ok(data_buf[0])
@@ -480,7 +480,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
             let spi: &mut Spi<'_, Async, Master> = &mut spi;
             spi.transfer_in_place(&mut buffer[..n])
                 .await
-                .map_err(Error::Spi)?;
+                .map_err(|_| Error::Spi)?;
             self.hw.cs.set_high();
 
             data.copy_from_slice(&buffer[1..n]);
@@ -496,12 +496,12 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
             let spi: &mut Spi<'_, Async, Master> = &mut spi;
 
             // Phase 1: Sending command-line
-            spi.write(&cmd_buf).await.map_err(|e| Error::Spi(e))?;
+            spi.write(&cmd_buf).await.map_err(|_| Error::Spi)?;
 
             embassy_time::Timer::after_micros(50).await;
 
             // Phase 2: Reading Data Bytes
-            spi.read(data).await.map_err(|e| Error::Spi(e))?;
+            spi.read(data).await.map_err(|_| Error::Spi)?;
 
             self.hw.cs.set_high();
             Ok(())
@@ -968,12 +968,12 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
         let spi: &mut Spi<'_, Async, Master> = &mut spi;
         spi.transfer_in_place(&mut cmd_buf)
             .await
-            .map_err(Error::Spi)?;
+            .map_err(|_| Error::Spi)?;
 
         for byte in data.iter_mut() {
             *byte = 0;
         }
-        spi.transfer_in_place(data).await.map_err(Error::Spi)?;
+        spi.transfer_in_place(data).await.map_err(|_| Error::Spi)?;
 
         self.hw.cs.set_high();
         Ok(())
