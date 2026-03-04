@@ -17,6 +17,7 @@ defmt = "1.0.1"
 debug = 2
 
 [features]
-default = []
+default = [ "driver" ]
+driver = []
 debug = []
 simulation = []
