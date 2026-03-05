@@ -2,6 +2,7 @@ use core::f32::consts::PI;
 use core::convert::TryFrom;
 use defmt::error;
 
+
 /// creates marker structs for the different states of the driver
 #[macro_export]
 macro_rules! create_state_marker {
@@ -23,13 +24,12 @@ create_state_marker!(
     Int2Disabled,
     Int2Enabled
 );
-type SpiError = embassy_stm32::spi::Error;
 
 /// Central error type for the LSM6DSV32 driver.
 #[derive(defmt::Format)]
 pub enum Error {
     /// SPI bus communication failure (e.g., timeout or hardware issue).
-    Spi(SpiError),
+    Spi,
     /// Requested data is not available (e.g., sensor is polling but no new data arrives).
     NoValue,
     /// Device ID mismatch: found the value in `u8`, but expected 0x70.

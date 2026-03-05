@@ -201,12 +201,13 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     }
 
     async fn set_config(&mut self, imu_config: ImuConfigRaw) {
-        if let Err(e) = self.write_config_registers(&imu_config).await {
-            error!("Error writing config registers: {:?}", e);
-        }
-
+        Timer::after_millis(500).await;
         if let Err(e) = self.check_who_i_am().await {
             error!("Error checking WHO_AM_I register: {:?}", e);
+        }
+        Timer::after_millis(500).await;
+        if let Err(e) = self.write_config_registers(&imu_config).await {
+            error!("Error writing config registers: {:?}", e);
         }
 
         //let cfg = &self.config;
@@ -221,6 +222,12 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         Ok(())
     }
 
+    pub async fn send_sim_start(&mut self) {
+        if let Err(e) = self.write_register(0x00, 0x55).await {
+            debug!("SPI Write Error (Data): {:?}", e);
+        }
+    }
+
     async fn write_config_registers(&mut self, imu_config: &ImuConfigRaw) -> Result<(), Error> {
         macro_rules! log_reg {
             ($name:expr, $val:expr) => {
@@ -232,18 +239,23 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
                 debug!("{} old: {:08b}, new: {:08b}", $name, $old, $new);
             };
         }
+        #[cfg(feature = "simulation")]
+        self.write_register(0x00, 0xCC).await?;
+        #[cfg(not(feature = "simulation"))]
+        {
+            let pin_ctrl_old = self.read_register(Register::PIN_CTRL as u8).await?;
+            let pin_ctrl = encode_reg8!(base: pin_ctrl_old, {
+                3 => 0, 2,
+                1 => 5, 1,
+                imu_config.general.sdo_pull_up as u8 => 6, 1,
+                0 => 7, 1
+            });
+            log_reg!("PIN_CTRL", pin_ctrl_old, pin_ctrl);
+            self.write_register(Register::PIN_CTRL as u8, pin_ctrl)
+                .await?;
+        }
 
-        let pin_ctrl_old = self.read_register(Register::PIN_CTRL as u8).await?;
-        let pin_ctrl = encode_reg8!(base: pin_ctrl_old, {
-            3 => 0, 2,
-            1 => 5, 1,
-            imu_config.general.sdo_pull_up as u8 => 6, 1,
-            0 => 7, 1
-        });
-        log_reg!("PIN_CTRL", pin_ctrl_old, pin_ctrl);
-        self.write_register(Register::PIN_CTRL as u8, pin_ctrl)
-            .await?;
-
+        Timer::after_millis(100).await;
         let if_ctrl_old = self.read_register(Register::IF_CTRL as u8).await?;
         let if_ctrl = encode_reg8!(base: if_ctrl_old, {
             imu_config.general.sda_pull_up as u8 => 7, 1,
@@ -256,45 +268,48 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         self.write_register(Register::IF_CTRL as u8, if_ctrl)
             .await?;
 
-        let fifo_ctrl1 = encode_reg8!({
-            imu_config.fifo.watermark_threshold => 0, 8
-        });
-        log_reg!("FIFO_CTRL1", fifo_ctrl1);
-        self.write_register(Register::FIFO_CTRL1 as u8, fifo_ctrl1)
-            .await?;
+        #[cfg(not(feature = "simulation"))]
+        {
+            let fifo_ctrl1 = encode_reg8!({
+                imu_config.fifo.watermark_threshold => 0, 8
+            });
+            log_reg!("FIFO_CTRL1", fifo_ctrl1);
+            self.write_register(Register::FIFO_CTRL1 as u8, fifo_ctrl1)
+                .await?;
 
-        let fifo_ctrl3 = encode_reg8!({
-            imu_config.fifo.gyro_fifo as u8 => 4, 4,
-            imu_config.fifo.accel_fifo as u8 => 0, 4
-        });
-        log_reg!("FIFO_CTRL3", fifo_ctrl3);
-        self.write_register(Register::FIFO_CTRL3 as u8, fifo_ctrl3)
-            .await?;
+            let fifo_ctrl3 = encode_reg8!({
+                imu_config.fifo.gyro_fifo as u8 => 4, 4,
+                imu_config.fifo.accel_fifo as u8 => 0, 4
+            });
+            log_reg!("FIFO_CTRL3", fifo_ctrl3);
+            self.write_register(Register::FIFO_CTRL3 as u8, fifo_ctrl3)
+                .await?;
 
-        let fifo_ctrl4 = encode_reg8!({
-            imu_config.fifo.ts_fifo as u8 => 6, 2,
-            imu_config.fifo.temp_fifo as u8 => 4, 2,
-            imu_config.fifo.mode as u8 => 0, 3
-        });
-        log_reg!("FIFO_CTRL4", fifo_ctrl4);
-        self.write_register(Register::FIFO_CTRL4 as u8, fifo_ctrl4)
-            .await?;
+            let fifo_ctrl4 = encode_reg8!({
+                imu_config.fifo.ts_fifo as u8 => 6, 2,
+                imu_config.fifo.temp_fifo as u8 => 4, 2,
+                imu_config.fifo.mode as u8 => 0, 3
+            });
+            log_reg!("FIFO_CTRL4", fifo_ctrl4);
+            self.write_register(Register::FIFO_CTRL4 as u8, fifo_ctrl4)
+                .await?;
 
-        let counter_th_89 = ((imu_config.fifo.counter_threshold >> 8) & 0b11) as u8;
-        let counter_th_07 = (imu_config.fifo.counter_threshold & 0xFF) as u8;
+            let counter_th_89 = ((imu_config.fifo.counter_threshold >> 8) & 0b11) as u8;
+            let counter_th_07 = (imu_config.fifo.counter_threshold & 0xFF) as u8;
 
-        let cbdr1 = encode_reg8!({
-            imu_config.fifo.counter_trigger as u8 => 5, 2,
-            counter_th_89 => 0, 2
-        });
-        log_reg!("COUNTER_BDR_REG1", cbdr1);
-        self.write_register(Register::COUNTER_BDR_REG1 as u8, cbdr1)
-            .await?;
+            let cbdr1 = encode_reg8!({
+                imu_config.fifo.counter_trigger as u8 => 5, 2,
+                counter_th_89 => 0, 2
+            });
+            log_reg!("COUNTER_BDR_REG1", cbdr1);
+            self.write_register(Register::COUNTER_BDR_REG1 as u8, cbdr1)
+                .await?;
 
-        let cbdr2 = encode_reg8!({ counter_th_07 => 0, 8 });
-        log_reg!("COUNTER_BDR_REG2", cbdr2);
-        self.write_register(Register::COUNTER_BDR_REG2 as u8, cbdr2)
-            .await?;
+            let cbdr2 = encode_reg8!({ counter_th_07 => 0, 8 });
+            log_reg!("COUNTER_BDR_REG2", cbdr2);
+            self.write_register(Register::COUNTER_BDR_REG2 as u8, cbdr2)
+                .await?;
+        }
 
         let int1 = encode_reg8!({
             imu_config.int1.counter_bdr_int as u8 => 6, 1,
@@ -332,13 +347,16 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         log_reg!("CTRL2", c2);
         self.write_register(Register::CTRL2 as u8, c2).await?;
 
-        let c4_old = self.read_register(Register::CTRL4 as u8).await?;
-        let c4 = encode_reg8!(base: c4_old, {
-            imu_config.int2.temp_ready as u8 => 2, 1
-        });
-        log_reg!("CTRL4", c4_old, c4);
-        self.write_register(Register::CTRL4 as u8, c4).await?;
+        #[cfg(not(feature = "simulation"))]
+        {
+            let c4_old = self.read_register(Register::CTRL4 as u8).await?;
+            let c4 = encode_reg8!(base: c4_old, {
+                imu_config.int2.temp_ready as u8 => 2, 1
+            });
 
+            log_reg!("CTRL4", c4_old, c4);
+            self.write_register(Register::CTRL4 as u8, c4).await?;
+        }
         let c6 = encode_reg8!({
             imu_config.gyro.lpf1 as u8 => 4, 3,
             imu_config.gyro.full_scale as u8 => 0, 4
@@ -346,10 +364,12 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         log_reg!("CTRL6", c6);
         self.write_register(Register::CTRL6 as u8, c6).await?;
 
-        let c7 = encode_reg8!({ imu_config.gyro.lpf1_enabled as u8 => 0, 1 });
-        log_reg!("CTRL7", c7);
-        self.write_register(Register::CTRL7 as u8, c7).await?;
-
+        #[cfg(not(feature = "simulation"))]
+        {
+            let c7 = encode_reg8!({ imu_config.gyro.lpf1_enabled as u8 => 0, 1 });
+            log_reg!("CTRL7", c7);
+            self.write_register(Register::CTRL7 as u8, c7).await?;
+        }
         let c8 = encode_reg8!({
             imu_config.accel.lp_hp_f2 as u8 => 5, 3,
             imu_config.accel.dual_channel as u8 => 3, 1,
@@ -359,48 +379,51 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         log_reg!("CTRL8", c8);
         self.write_register(Register::CTRL8 as u8, c8).await?;
 
-        let c9_old = self.read_register(Register::CTRL9 as u8).await?;
-        let c9 = encode_reg8!(base: c9_old, {
-            imu_config.accel.hp_reference_mode as u8 => 6, 1,
-            imu_config.accel.lp_hp as u8 => 4, 1,
-            imu_config.accel.lpf2_enabled as u8 => 3, 1,
-            imu_config.accel.user_offset_weight as u8 => 1, 1,
-            imu_config.accel.user_offset_en as u8 => 0, 1
-        });
-        log_reg!("CTRL9", c9_old, c9);
-        self.write_register(Register::CTRL9 as u8, c9).await?;
-
-        log_reg!("USER_OFFSET_X", imu_config.accel.user_offset[0] as u8);
-        self.write_register(0x73, imu_config.accel.user_offset[0] as u8)
-            .await?;
-        log_reg!("USER_OFFSET_Y", imu_config.accel.user_offset[1] as u8);
-        self.write_register(0x74, imu_config.accel.user_offset[1] as u8)
-            .await?;
-        log_reg!("USER_OFFSET_Z", imu_config.accel.user_offset[2] as u8);
-        self.write_register(0x75, imu_config.accel.user_offset[2] as u8)
-            .await?;
-
-        let fe = encode_reg8!({
-            imu_config.general.timestamp_enabled as u8 => 6, 1
-        });
-        log_reg!("FUNCTIONS_ENABLE", fe);
-        self.write_register(Register::FUNCTIONS_ENABLE as u8, fe)
-            .await?;
-
-        let fc = encode_reg8!({
-            imu_config.fifo.batch_dual as u8 => 7,1
-        });
-        log_reg!("FUNCTIONS_CONFIG", fc);
-        self.write_register(Register::EMB_FUNC_CFG as u8, fc)
-            .await?;
-
-        if imu_config.high_accuracy_mode.is_some() {
-            let haodr_cfg = encode_reg8!({
-                imu_config.high_accuracy_mode.unwrap() as u8 => 0,2
+        #[cfg(not(feature = "simulation"))]
+        {
+            let c9_old = self.read_register(Register::CTRL9 as u8).await?;
+            let c9 = encode_reg8!(base: c9_old, {
+                imu_config.accel.hp_reference_mode as u8 => 6, 1,
+                imu_config.accel.lp_hp as u8 => 4, 1,
+                imu_config.accel.lpf2_enabled as u8 => 3, 1,
+                imu_config.accel.user_offset_weight as u8 => 1, 1,
+                imu_config.accel.user_offset_en as u8 => 0, 1
             });
-            log_reg!("HAODR_CONFIG", haodr_cfg);
-            self.write_register(Register::HAODR_CFG as u8, haodr_cfg)
+            log_reg!("CTRL9", c9_old, c9);
+            self.write_register(Register::CTRL9 as u8, c9).await?;
+
+            log_reg!("USER_OFFSET_X", imu_config.accel.user_offset[0] as u8);
+            self.write_register(0x73, imu_config.accel.user_offset[0] as u8)
                 .await?;
+            log_reg!("USER_OFFSET_Y", imu_config.accel.user_offset[1] as u8);
+            self.write_register(0x74, imu_config.accel.user_offset[1] as u8)
+                .await?;
+            log_reg!("USER_OFFSET_Z", imu_config.accel.user_offset[2] as u8);
+            self.write_register(0x75, imu_config.accel.user_offset[2] as u8)
+                .await?;
+
+            let fe = encode_reg8!({
+                imu_config.general.timestamp_enabled as u8 => 6, 1
+            });
+            log_reg!("FUNCTIONS_ENABLE", fe);
+            self.write_register(Register::FUNCTIONS_ENABLE as u8, fe)
+                .await?;
+
+            let fc = encode_reg8!({
+                imu_config.fifo.batch_dual as u8 => 7,1
+            });
+            log_reg!("FUNCTIONS_CONFIG", fc);
+            self.write_register(Register::EMB_FUNC_CFG as u8, fc)
+                .await?;
+
+            if imu_config.high_accuracy_mode.is_some() {
+                let haodr_cfg = encode_reg8!({
+                    imu_config.high_accuracy_mode.unwrap() as u8 => 0,2
+                });
+                log_reg!("HAODR_CONFIG", haodr_cfg);
+                self.write_register(Register::HAODR_CFG as u8, haodr_cfg)
+                    .await?;
+            }
         }
 
         Ok(())
@@ -410,13 +433,13 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         const READ_BIT: u8 = 0x80;
         let cmd = reg & !READ_BIT; //Bit 7 = 0 -> Write-Mode -> 0x80: 1000 0000 -> !0x80: 0111 1111
 
-        let mut buffer = [cmd, val];
-        self.hw.cs.set_low();
+        let mut frame = [cmd, val];
+
         let mut spi = self.hw.spi.lock().await;
         let spi: &mut Spi<'_, Async, Master> = &mut spi;
-        spi.transfer_in_place(&mut buffer)
+        spi.transfer_in_place(&mut frame)
             .await
-            .map_err(|e| Error::Spi(e))?;
+            .map_err(|_| Error::Spi)?;
         self.hw.cs.set_high();
 
         Ok(())
@@ -426,42 +449,21 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         const READ_BIT: u8 = 0x80;
         let cmd = reg | READ_BIT;
 
-        #[cfg(not(feature = "simulation"))]
-        {
-            let mut buffer = [cmd, 0x00];
+        let mut buffer = [cmd, 0x00];
 
-            self.hw.cs.set_low();
-            let mut spi = self.hw.spi.lock().await;
-            let spi: &mut Spi<'_, Async, Master> = &mut spi;
+        let mut spi = self.hw.spi.lock().await;
+        let spi: &mut Spi<'_, Async, Master> = &mut spi;
+        self.hw.cs.set_low();
 
-            spi.transfer_in_place(&mut buffer)
-                .await
-                .map_err(|e| Error::Spi(e))?;
-            self.hw.cs.set_high();
+        spi.transfer_in_place(&mut buffer)
+            .await
+            .map_err(|_| Error::Spi)?;
+        self.hw.cs.set_high();
 
-            if buffer.len() < 1 {
-                return Err(Error::NoValue);
-            } else {
-                Ok(buffer[1])
-            }
-        }
-        #[cfg(feature = "simulation")]
-        {
-            let cmd_buf = [cmd];
-            let mut data_buf = [0u8; 1];
-
-            self.hw.cs.set_low();
-            let mut spi = self.hw.spi.lock().await;
-            let spi: &mut Spi<'_, Async, Master> = &mut spi;
-
-            // Phase 1: Sending command-line
-            spi.write(&cmd_buf).await.map_err(|e| Error::Spi(e))?;
-            Timer::after_micros(50).await;
-            // Phase 2: Reading Data Byte
-            spi.read(&mut data_buf).await.map_err(|e| Error::Spi(e))?;
-
-            self.hw.cs.set_high();
-            Ok(data_buf[0])
+        if buffer.len() < 1 {
+            return Err(Error::NoValue);
+        } else {
+            Ok(buffer[1])
         }
     }
 
@@ -469,44 +471,22 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         const READ_BIT: u8 = 0x80;
         let cmd = start_reg | READ_BIT;
 
-        #[cfg(not(feature = "simulation"))]
-        {
-            let mut buffer = [0u8; 141]; //max 141 Bytes data = 20 FifoSamples
-            let n = 1 + data.len();
-            buffer[0] = cmd;
+        let mut buffer = [0u8; 141]; //max 141 Bytes data = 20 FifoSamples
+        let n = 1 + data.len();
+        buffer[0] = cmd;
 
-            self.hw.cs.set_low();
-            let mut spi = self.hw.spi.lock().await;
-            let spi: &mut Spi<'_, Async, Master> = &mut spi;
-            spi.transfer_in_place(&mut buffer[..n])
-                .await
-                .map_err(Error::Spi)?;
-            self.hw.cs.set_high();
+        let mut spi = self.hw.spi.lock().await;
+        let spi: &mut Spi<'_, Async, Master> = &mut spi;
+        self.hw.cs.set_low();
+        spi.transfer_in_place(&mut buffer[..n])
+            .await
+            .map_err(|_| Error::Spi)?;
+        self.hw.cs.set_high();
 
-            data.copy_from_slice(&buffer[1..n]);
-            Ok(())
-        }
-
-        #[cfg(feature = "simulation")]
-        {
-            let cmd_buf = [cmd];
-
-            self.hw.cs.set_low();
-            let mut spi = self.hw.spi.lock().await;
-            let spi: &mut Spi<'_, Async, Master> = &mut spi;
-
-            // Phase 1: Sending command-line
-            spi.write(&cmd_buf).await.map_err(|e| Error::Spi(e))?;
-
-            embassy_time::Timer::after_micros(50).await;
-
-            // Phase 2: Reading Data Bytes
-            spi.read(data).await.map_err(|e| Error::Spi(e))?;
-
-            self.hw.cs.set_high();
-            Ok(())
-        }
+        data.copy_from_slice(&buffer[1..n]);
+        Ok(())
     }
+
     /// Reads raw acceleration data from both channels
     /// Applies hardware bias offsets and returns (ch1, ch2) triplets
     pub async fn read_accel_dual_raw(&mut self) -> Result<([i16; 3], [i16; 3]), Error> {
@@ -968,12 +948,12 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
         let spi: &mut Spi<'_, Async, Master> = &mut spi;
         spi.transfer_in_place(&mut cmd_buf)
             .await
-            .map_err(Error::Spi)?;
+            .map_err(|_| Error::Spi)?;
 
         for byte in data.iter_mut() {
             *byte = 0;
         }
-        spi.transfer_in_place(data).await.map_err(Error::Spi)?;
+        spi.transfer_in_place(data).await.map_err(|_| Error::Spi)?;
 
         self.hw.cs.set_high();
         Ok(())
