@@ -32,7 +32,7 @@ nb = "1.1.0"
 embedded-io-async = { version = "0.7.0" }
 bitflags = "2.10.0"
 
-lsm6dsv32 = { version = "0.1.0", path = "../lsm6dsv32", features = ["debug"] }
+lsm6dsv32 = { version = "0.1.0", path = "../lsm6dsv32", features = ["debug","simulation"] }
 
 [profile.release]
 debug = 2

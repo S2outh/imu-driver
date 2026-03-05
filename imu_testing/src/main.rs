@@ -67,7 +67,7 @@ async fn main(spawner: Spawner) {
 
     let spi = SPI.init(spi_mutex);
 
-    let cs = Output::new(p.PB1, Level::High, Speed::High);
+    let cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
 
     let int1 = ExtiInput::new(p.PA9, p.EXTI9, Pull::Down, Irqs);
 
@@ -79,28 +79,11 @@ async fn main(spawner: Spawner) {
     let _ = lsm.config.accel.set_odr(AccelODR::KHz1_92);
     lsm.config.accel.full_scale = AccelFS::G8;
     lsm.config.gyro.full_scale = GyroFS::DPS500;
-
-    loop {
+    for _ in 0..3 {
+        Timer::after_secs(5).await;
         lsm.commit_config().await;
-        if let Err(e) = lsm.check_who_i_am().await {
-            defmt::error!("WHO_AM_I Check failed: {:?}", e);
-
-            // Optional: Spezifische Reaktion auf den Fehler
-            match e {
-                Error::WrongWhoAmI(val) => {
-                    defmt::warn!("Sensor responded with 0x{:02x} instead of 0x70", val)
-                }
-                Error::Spi(_) => defmt::error!("Hardware/Timing problem on SPI bus"),
-                _ => {}
-            }
-            // Hier könntest du z.B. den Task neu starten oder in einen Fehlerzustand gehen
-        } else {
-            defmt::info!("WHO_AM_I check successful!");
-        }
-        Timer::after_secs(20).await;
     }
-
-    spawner.spawn(send_iterupt(p.PB5)).unwrap();
+    lsm.send_sim_start().await;
 
     /*
     loop {
