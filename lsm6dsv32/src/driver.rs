@@ -201,11 +201,9 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     }
 
     async fn set_config(&mut self, imu_config: ImuConfigRaw) {
-        Timer::after_millis(500).await;
         if let Err(e) = self.check_who_i_am().await {
             error!("Error checking WHO_AM_I register: {:?}", e);
         }
-        Timer::after_millis(500).await;
         if let Err(e) = self.write_config_registers(&imu_config).await {
             error!("Error writing config registers: {:?}", e);
         }
@@ -255,7 +253,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
                 .await?;
         }
 
-        Timer::after_millis(100).await;
+        Timer::after_micros(100).await;
         let if_ctrl_old = self.read_register(Register::IF_CTRL as u8).await?;
         let if_ctrl = encode_reg8!(base: if_ctrl_old, {
             imu_config.general.sda_pull_up as u8 => 7, 1,
@@ -437,6 +435,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
 
         let mut spi = self.hw.spi.lock().await;
         let spi: &mut Spi<'_, Async, Master> = &mut spi;
+        self.hw.cs.set_low();
         spi.transfer_in_place(&mut frame)
             .await
             .map_err(|_| Error::Spi)?;
@@ -565,12 +564,15 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
 
     async fn read_status_reg(&mut self) -> Result<ReadySRC, Error> {
         let status = self.read_register(Register::STATUS_REG as u8).await?;
+        #[cfg(feature = "debug")]
+        debug!("status: {}", status);
         Ok(ReadySRC {
             accel: (status & 0b0000_0001) != 0,
             gyro: (status & 0b0000_0010) != 0,
             temp: (status & 0b0000_0100) != 0,
         })
     }
+
     /// Reads and scales timestamp to ns and applies hardware offset
     pub async fn read_timestamp(&mut self) -> Result<u64, Error> {
         if self.config.general.timestamp_enabled == false {
@@ -632,28 +634,9 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
                 }
             };
 
-            match mode {
-                LogicOp::AND => {
-                    if (!accel || status.accel) && (!gyro || status.gyro) && (!temp || status.temp)
-                    {
-                        return Some(ReadySRC {
-                            gyro: gyro && status.gyro,
-                            accel: accel && status.accel,
-                            temp: temp && status.temp,
-                        });
-                    }
-                }
-                LogicOp::OR => {
-                    if (accel && status.accel) || (gyro && status.gyro) || (temp && status.temp) {
-                        return Some(ReadySRC {
-                            gyro: gyro && status.gyro,
-                            accel: accel && status.accel,
-                            temp: temp && status.temp,
-                        });
-                    }
-                }
+            if status.fulfills(accel, gyro, temp, mode) {
+                return Some(status);
             }
-
             Timer::after(embassy_time::Duration::from_micros(delay_us)).await
         }
     }
@@ -669,10 +652,9 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     /// - `ts`: If `true`, includes a timestamp in the sample via [`read_timestamp`](Self::read_timestamp).
     /// - `delay_us`: Polling interval in microseconds.
     /// - `mode`: The [`LogicOp`] (AND/OR) used to trigger the read.
-    /// - `on_sample`: A closure that implements `FnMut(ImuSample)` handeling the resulting data.
     ///
     /// ### Returns
-    /// - `Ok(())` if the poll was successful and the callback was executed.
+    /// - `Ok(sample)` if the poll was successful an sample is returned.
     /// - `Err(Error::NoValue)` if the polling condition was not met or parameters were invalid.
     ///
     /// ### Example: Logging Accel and Gyro data
@@ -681,13 +663,10 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     ///     true, true, false, // Accel & Gyro
     ///     true,              // Include timestamp
     ///     1000,              // Check every 1ms
-    ///     LogicOp::AND,      // Wait until BOTH are ready
-    ///     |sample| {
-    ///         info!("New Sample at {}: Accel={:?}, Gyro={:?}", sample.last_ts, sample.accel, sample.gyro);
-    ///     }
+    ///     LogicOp::AND,      // Wait until BOTH are ready    
     /// ).await?;
     /// ```
-    pub async fn read_data_when_ready_polling<F>(
+    pub async fn read_data_when_ready_polling(
         &mut self,
         accel: bool,
         gyro: bool,
@@ -695,44 +674,51 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         ts: bool,
         delay_us: u64,
         mode: LogicOp,
-        mut on_sample: F,
-    ) -> Result<(), Error>
-    where
-        F: FnMut(ImuSample),
-    {
-        let rdy = self
-            .wait_for_data_ready_polling(accel, gyro, temp, mode, delay_us)
-            .await;
-        if rdy.is_none() {
-            return Err(Error::NoValue);
+    ) -> Result<ImuSample, Error> {
+        #[cfg(feature = "simulation")]
+        {
+            let hil_info = encode_reg8!({
+                accel as u8 => 0, 1,
+                gyro as u8  => 1, 1,
+                temp as u8  => 2, 1,
+                mode as u8  => 3, 1
+            });
+            self.write_register(Register::READ_DATA_CTRL as u8, hil_info)
+                .await?;
         }
-        if let Some(data_ready) = rdy {
-            let mut sample: ImuSample = Default::default();
+
+        let data_ready = self
+            .wait_for_data_ready_polling(accel, gyro, temp, mode, delay_us)
+            .await
+            .ok_or(Error::NoValue)?;
+
+        let mut sample = ImuSample::default();
+        #[cfg(not(feature = "simulation"))]
+        {
             if ts {
                 sample.last_ts = self.read_timestamp().await.unwrap_or(0) as u64;
             }
-            if data_ready.accel
-                && self.config.accel.odr != AccelODR::PowerDown
-                && !self.config.accel.dual_channel
-            {
-                sample.accel = self.read_accel_raw().await?;
-            }
-            if data_ready.accel
-                && self.config.accel.odr != AccelODR::PowerDown
-                && self.config.accel.dual_channel
-            {
-                (sample.accel, sample.accel_ch2) = self.read_accel_dual_raw().await?;
-            }
-            if data_ready.gyro && self.config.gyro.odr != GyroODR::PowerDown {
-                sample.gyro = self.read_gyro_raw().await?;
-            }
-            if data_ready.temp && self.config.general.timestamp_enabled {
+
+            if data_ready.temp {
                 sample.temp = self.read_temp_raw().await?;
             }
-            on_sample(sample);
         }
 
-        Ok(())
+        if data_ready.accel {
+            if self.config.accel.dual_channel {
+                let (ch1, ch2) = self.read_accel_dual_raw().await?;
+                sample.accel = ch1;
+                sample.accel_ch2 = ch2;
+            } else {
+                sample.accel = self.read_accel_raw().await?;
+            }
+        }
+
+        if data_ready.gyro {
+            sample.gyro = self.read_gyro_raw().await?;
+        }
+
+        Ok(sample)
     }
 
     /// Syncs the internal time reference to the current sensor timestamp.
@@ -748,6 +734,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         if let Err(e) = self.write_config_registers(&self.config.build()).await {
             error!("Error committing config: {:?}", e);
         }
+        Timer::after_micros(100).await;
     }
 }
 
@@ -1045,15 +1032,12 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
         loop {
             if self.config.general.interrupt_lvl == false {
                 self.hw.int1.wait_for_high().await;
-                #[cfg(feature = "debug")]
-                debug!("Interrupt erkannt")
             } else {
                 self.hw.int1.wait_for_low().await;
-                #[cfg(feature = "debug")]
-                debug!("Interrupt erkannt")
             }
             let status = self.read_status_reg().await?;
-
+            #[cfg(feature = "debug")]
+            debug!("Level: {:?} => {:?}",self.hw.int1.get_level(), status);
             match mode {
                 LogicOp::AND => {
                     if (!accel || status.accel) && (!gyro || status.gyro) && (!temp || status.temp)
@@ -1075,61 +1059,58 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
                     }
                 }
             }
+
         }
     }
 
     /// High-level orchestrator for interrupt-driven data acquisition.
     ///
     /// - **Wait**: Uses [`wait_for_data_ready_interrupt1`](Self::wait_for_data_ready_interrupt1).
-    /// - **Callback**: Reads data into an [`ImuSample`] and triggers the `on_sample` callback.
+    /// - **Callback**: Reads data into an [`ImuSample`]
     ///
     /// ### Example
     /// ```rust
     /// // Wake up on INT1 and process Accel/Gyro data
-    /// imu.read_data_when_ready_interrupt1(true, true, false, true, LogicOp::AND, |s| {
-    ///     do_something(s);
-    /// }).await?;
+    /// imu.read_data_when_ready_interrupt1(true, true, false, true, LogicOp::AND}).await?;
     /// ```
-    pub async fn read_data_when_ready_interrupt1<F>(
+    pub async fn read_data_when_ready_interrupt1(
         &mut self,
         accel: bool,
         gyro: bool,
         temp: bool,
         ts: bool,
         mode: LogicOp,
-        mut on_sample: F,
-    ) -> Result<(), Error>
-    where
-        F: FnMut(ImuSample),
-    {
+    ) -> Result<ImuSample, Error> {
         let data_ready = self
             .wait_for_data_ready_interrupt1(accel, gyro, temp, mode)
             .await?;
 
-        let mut sample: ImuSample = Default::default();
-        if ts {
-            sample.last_ts = self.read_timestamp().await.unwrap_or(0) as u64;
-        }
-        if data_ready.accel
-            && self.config.accel.odr != AccelODR::PowerDown
-            && !self.config.accel.dual_channel
+        let mut sample = ImuSample::default();
+
+        #[cfg(not(feature = "simulation"))]
         {
-            sample.accel = self.read_accel_raw().await?;
+            if ts {
+                sample.last_ts = self.read_timestamp().await.unwrap_or(0) as u64;
+            }
+
+            if data_ready.temp {
+                sample.temp = self.read_temp_raw().await?;
+            }
         }
-        if data_ready.accel
-            && self.config.accel.odr != AccelODR::PowerDown
-            && self.config.accel.dual_channel
-        {
-            (sample.accel, sample.accel_ch2) = self.read_accel_dual_raw().await?;
+        if data_ready.accel {
+            if self.config.accel.dual_channel {
+                let (ch1, ch2) = self.read_accel_dual_raw().await?;
+                sample.accel = ch1;
+                sample.accel_ch2 = ch2;
+            } else {
+                sample.accel = self.read_accel_raw().await?;
+            }
         }
-        if data_ready.gyro && self.config.gyro.odr != GyroODR::PowerDown {
+        if data_ready.gyro {
             sample.gyro = self.read_gyro_raw().await?;
         }
-        if data_ready.temp && self.config.general.timestamp_enabled {
-            sample.temp = self.read_temp_raw().await?;
-        }
-        on_sample(sample);
-        Ok(())
+        Ok(sample)
+        
     }
 }
 
@@ -1203,45 +1184,44 @@ impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Enabled> {
     ///     do_something(s);
     /// }).await?;
     /// ```
-    pub async fn read_data_when_ready_interrupt2<F>(
+    pub async fn read_data_when_ready_interrupt2(
         &mut self,
         accel: bool,
         gyro: bool,
         temp: bool,
         ts: bool,
         mode: LogicOp,
-        mut on_sample: F,
-    ) -> Result<(), Error>
-    where
-        F: FnMut(ImuSample),
-    {
+    ) -> Result<ImuSample, Error> {
         let data_ready = self
             .wait_for_data_ready_interrupt2(accel, gyro, temp, mode)
             .await?;
 
-        let mut sample: ImuSample = Default::default();
-        if ts {
-            sample.last_ts = self.read_timestamp().await.unwrap_or(0) as u64;
-        }
-        if data_ready.accel
-            && self.config.accel.odr != AccelODR::PowerDown
-            && !self.config.accel.dual_channel
+        let mut sample = ImuSample::default();
+        #[cfg(not(feature = "simulation"))]
         {
-            sample.accel = self.read_accel_raw().await?;
+            if ts {
+                sample.last_ts = self.read_timestamp().await.unwrap_or(0) as u64;
+            }
+
+            if data_ready.temp {
+                sample.temp = self.read_temp_raw().await?;
+            }
         }
-        if data_ready.accel
-            && self.config.accel.odr != AccelODR::PowerDown
-            && self.config.accel.dual_channel
-        {
-            (sample.accel, sample.accel_ch2) = self.read_accel_dual_raw().await?;
+
+        if data_ready.accel {
+            if self.config.accel.dual_channel {
+                let (ch1, ch2) = self.read_accel_dual_raw().await?;
+                sample.accel = ch1;
+                sample.accel_ch2 = ch2;
+            } else {
+                sample.accel = self.read_accel_raw().await?;
+            }
         }
-        if data_ready.gyro && self.config.gyro.odr != GyroODR::PowerDown {
+
+        if data_ready.gyro {
             sample.gyro = self.read_gyro_raw().await?;
         }
-        if data_ready.temp && self.config.general.timestamp_enabled {
-            sample.temp = self.read_temp_raw().await?;
-        }
-        on_sample(sample);
-        Ok(())
+
+        Ok(sample)
     }
 }

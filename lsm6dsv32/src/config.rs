@@ -1,6 +1,6 @@
 use core::f32::consts::PI;
 use core::convert::TryFrom;
-use defmt::error;
+use defmt::{debug, error};
 
 
 /// creates marker structs for the different states of the driver
@@ -36,6 +36,7 @@ pub enum Error {
     WrongWhoAmI(u8),
     /// Invalid driver state (e.g., trying to read a sensor that is powered down).
     WrongConfig,
+    BufferOverflow,
 }
 
 /// Register map for the LSM6DSV32 sensor, defining addresses for configuration, status, and output data
@@ -75,6 +76,9 @@ pub enum Register {
     HAODR_CFG = 0x62,
     FIFO_DATA_OUT_TAG = 0x78,
     FIFO_DATA_OUT_X_L = 0x79,
+
+    // HIL-CTRL
+    READ_DATA_CTRL = 0xC1,
 }
 
 impl TryFrom<u8> for Register {
@@ -201,7 +205,7 @@ impl Default for GenerelConfig {
             anti_spike_filter: false,
             interrupt_lvl: false,
             interrupt_pin_mode: false,
-            timestamp_enabled: true,
+            timestamp_enabled: false,
         }
     }
 }
@@ -391,7 +395,7 @@ impl AccelConfig {
                 if (odr as u8) >= (AccelODR::Hz7_5 as u8) {
                     self.odr = odr;
                 } else {
-                    error!("HighAccuracyMode only available with an ODR above 7.5Hz");
+                    error!("HighPerformanceMode only available with an ODR above 7.5Hz");
                     return Err(Error::WrongConfig);
                 }
             }
@@ -524,7 +528,7 @@ pub struct Interrupt2Config {
     pub temp_ready: bool,
 }
 /// Configures the output data rate behaviour in High Accuracy Mode refering to user manual p. 33 table 20
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
 #[repr(u8)]
 pub enum HighAccuracyODR {
     Standard = 0,
@@ -741,7 +745,7 @@ impl AccelFS {
     }
 }
 /// Accelerometer Power and Performance-Modes
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
 #[repr(u8)]
 pub enum AccelOperatingMode {
     HighPerformance = 0b000,
@@ -900,6 +904,7 @@ impl Default for ImuSampleF32 {
     }
 }
 /// Raw IMU data as read directly from the sensor registers with offsets
+#[derive(defmt::Format,Copy,Clone)]
 pub struct ImuSample {
     pub accel: [i16; 3],
     pub accel_ch2: [i16; 3],
@@ -919,6 +924,14 @@ impl Default for ImuSample {
             last_ts: 0,
             delta_ts: 0,
         }
+    }
+}
+
+impl ImuSample {
+    pub fn check_sample(&self, correct_sample: &ImuSample) -> bool {
+        correct_sample.accel == self.accel && 
+        correct_sample.accel_ch2 == self.accel_ch2 &&
+        correct_sample.gyro == self.gyro
     }
 }
 // Aggregates asynchronous sensor data into synchronized [`ImuSample`] packets
@@ -1042,6 +1055,19 @@ pub struct ReadySRC {
     pub gyro: bool,
     pub accel: bool,
     pub temp: bool,
+}
+
+impl ReadySRC {
+    pub fn fulfills(&self, accel: bool, gyro: bool, temp: bool, mode: LogicOp) -> bool {
+        match mode {
+            LogicOp::AND => {
+                (!accel || self.accel) && (!gyro || self.gyro) && (!temp || self.temp)
+            }
+            LogicOp::OR => {
+                (accel && self.accel) || (gyro && self.gyro) || (temp && self.temp)
+            }
+        }
+    }
 }
 
 impl ReadySRC {
