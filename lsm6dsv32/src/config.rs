@@ -1,7 +1,5 @@
 use core::f32::consts::PI;
 use core::convert::TryFrom;
-use defmt::{debug, error};
-
 
 /// creates marker structs for the different states of the driver
 #[macro_export]
@@ -26,7 +24,7 @@ create_state_marker!(
 );
 
 /// Central error type for the LSM6DSV32 driver.
-#[derive(defmt::Format)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 pub enum Error {
     /// SPI bus communication failure (e.g., timeout or hardware issue).
     Spi,
@@ -259,7 +257,8 @@ impl GyroConfig {
                 if (odr as u8) >= (GyroODR::Hz15 as u8) {
                     self.odr = odr;
                 } else {
-                    error!("HighAccuracyMode only available with an ODR above 15Hz");
+                    #[cfg(feature = "debug")]
+                    defmt::error!("HighAccuracyMode only available with an ODR above 15Hz");
                     return Err(Error::WrongConfig);
                 }
             }
@@ -267,7 +266,8 @@ impl GyroConfig {
                 if (odr as u8) <= (GyroODR::Hz240 as u8) {
                     self.odr = odr;
                 } else {
-                    error!("LowPowerMode only available with an odr equal or less than 240Hz");
+                    #[cfg(feature = "debug")]
+                    defmt::error!("LowPowerMode only available with an odr equal or less than 240Hz");
                     return Err(Error::WrongConfig);
                 }
             }
@@ -282,7 +282,8 @@ impl GyroConfig {
             self.lpf1 = gyro_bw;
             Ok(())
         } else {
-            error!("lpf1 only available in high-performance-mode");
+            #[cfg(feature = "debug")]
+            defmt::error!("lpf1 only available in high-performance-mode");
             return Err(Error::WrongConfig);
         }
     }
@@ -395,7 +396,8 @@ impl AccelConfig {
                 if (odr as u8) >= (AccelODR::Hz7_5 as u8) {
                     self.odr = odr;
                 } else {
-                    error!("HighPerformanceMode only available with an ODR above 7.5Hz");
+                    #[cfg(feature = "debug")]
+                    defmt::error!("HighAccuracyMode only available with an ODR above 7.5Hz");
                     return Err(Error::WrongConfig);
                 }
             }
@@ -405,7 +407,8 @@ impl AccelConfig {
                 {
                     self.odr = odr;
                 } else {
-                    error!("NormalMode only available with an ODR between 7.5Hz and 1.92kHz");
+                    #[cfg(feature = "debug")]
+                    defmt::error!("NormalMode only available with an ODR between 7.5Hz and 1.92kHz");
                     return Err(Error::WrongConfig);
                 }
             }
@@ -413,7 +416,8 @@ impl AccelConfig {
                 if (odr as u8) >= (GyroODR::Hz15 as u8) {
                     self.odr = odr;
                 } else {
-                    error!("HighAccuracyMode only available with an ODR above 15Hz");
+                    #[cfg(feature = "debug")]
+                    defmt::error!("HighAccuracyMode only available with an ODR above 15Hz");
                     return Err(Error::WrongConfig);
                 }
             }
@@ -423,7 +427,8 @@ impl AccelConfig {
                 if (odr as u8) <= (GyroODR::Hz240 as u8) {
                     self.odr = odr;
                 } else {
-                    error!("LowPowerMode only available with an odr equal or less than 240Hz");
+                    #[cfg(feature = "debug")]
+                    defmt::error!("LowPowerMode only available with an odr equal or less than 240Hz");
                     return Err(Error::WrongConfig);
                 }
             }
@@ -528,7 +533,8 @@ pub struct Interrupt2Config {
     pub temp_ready: bool,
 }
 /// Configures the output data rate behaviour in High Accuracy Mode refering to user manual p. 33 table 20
-#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 #[repr(u8)]
 pub enum HighAccuracyODR {
     Standard = 0,
@@ -552,7 +558,8 @@ pub enum IntMode {
 }
 
 /// Gyro Output-Data-Rate
-#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 #[repr(u8)]
 pub enum GyroODR {
     PowerDown = 0b0000,
@@ -603,7 +610,8 @@ pub enum GyroLpf1 {
     UltraNarrow = 0b111,
 }
 /// Selection of gyro Full-Scale range in dps
-#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 #[repr(u8)]
 pub enum GyroFS {
     DPS125 = 0b0000,
@@ -673,7 +681,8 @@ impl GyroBatchDataRate {
     }
 }
 /// Accelerometer Output-Data-Rate
-#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 #[repr(u8)]
 pub enum AccelODR {
     PowerDown = 0b0000,
@@ -725,7 +734,8 @@ pub enum AccelFilterBW {
     OdrDiv800 = 0b111,
 }
 /// Selection of accelerometer full-scale range in g
-#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 #[repr(u8)]
 pub enum AccelFS {
     G4 = 0b00,
@@ -745,7 +755,8 @@ impl AccelFS {
     }
 }
 /// Accelerometer Power and Performance-Modes
-#[derive(PartialEq, Eq, Debug, Clone, Copy, defmt::Format)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 #[repr(u8)]
 pub enum AccelOperatingMode {
     HighPerformance = 0b000,
@@ -843,8 +854,8 @@ pub enum TriggerCounter {
     Gyro = 0b01,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 /// Current state of the FIFO buffer, parsed from the hardware status registers
 pub struct FifoStatusSample {
     /// Number of unread samples stored in the FIFO
@@ -904,7 +915,8 @@ impl Default for ImuSampleF32 {
     }
 }
 /// Raw IMU data as read directly from the sensor registers with offsets
-#[derive(defmt::Format,Copy,Clone)]
+#[derive(Copy, Clone)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 pub struct ImuSample {
     pub accel: [i16; 3],
     pub accel_ch2: [i16; 3],
@@ -1042,7 +1054,8 @@ impl Sampler {
 }
 /// Represents the 8-bit metadata tag attached to every FIFO dataset
 /// Used to identify which sensor produced the data and its sequence position
-#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 pub struct FifoTag {
     /// 2 bit counter used to synchronize multiple data streams
     pub tag_counter: u8,
@@ -1050,7 +1063,8 @@ pub struct FifoTag {
     pub tag_sensor: u8,
 }
 /// Status flags indicating which sensor has new data available
-#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 pub struct ReadySRC {
     pub gyro: bool,
     pub accel: bool,
@@ -1083,7 +1097,8 @@ pub enum LogicOp {
     OR,
 }
 /// Defines the hardware event that triggers a FIFO interrupt
-#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "debug", derive(defmt::Format))]
 pub enum FifoTrigger {
     Watermark,
     Counter,

@@ -1,6 +1,5 @@
 pub use crate::config::*;
 
-use defmt::*;
 use embassy_stm32::{
     exti::ExtiInput,
     gpio::Output,
@@ -131,15 +130,19 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     ///
     /// Logged Output data can also be hardcoded later using [`set_hardware_offsets`](Self::set_hardware_offsets)
     pub async fn calibrate(&mut self) -> Result<(), Error> {
-        info!("Starting calibration...");
+        #[cfg(feature = "debug")]
+        defmt::info!("Starting calibration...");
         self.calibrate_accel().await?;
-        info!("Accel-Bias: {:?}", self.hw.bias_accel);
+        #[cfg(feature = "debug")]
+        defmt::info!("Accel-Bias: {:?}", self.hw.bias_accel);
+        #[cfg(feature = "debug")]
         if self.config.accel.dual_channel {
-            info!("Accel-Bias channel 2: {:?}", self.hw.bias_accel_ch2);
+            defmt::info!("Accel-Bias channel 2: {:?}", self.hw.bias_accel_ch2);
         }
 
         self.calibrate_gyro().await?;
-        info!("Gyro-Bias: {:?}", self.hw.bias_gyro);
+        #[cfg(feature = "debug")]
+        defmt::info!("Gyro-Bias: {:?}", self.hw.bias_gyro);
         Ok(())
     }
     /// Manually sets pre-calculated hardware bias offsets bypassing the calibration via [`calibrate`](Self::calibrate)
@@ -202,14 +205,17 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
 
     async fn set_config(&mut self, imu_config: ImuConfigRaw) {
         if let Err(e) = self.check_who_i_am().await {
-            error!("Error checking WHO_AM_I register: {:?}", e);
+            #[cfg(feature = "debug")]
+            defmt::error!("Error checking WHO_AM_I register: {:?}", e);
         }
         if let Err(e) = self.write_config_registers(&imu_config).await {
-            error!("Error writing config registers: {:?}", e);
+            #[cfg(feature = "debug")]
+            defmt::error!("Error writing config registers: {:?}", e);
         }
 
         //let cfg = &self.config;
-        info!("IMU-configuration finished");
+        #[cfg(feature = "debug")]
+        defmt::info!("IMU-configuration finished");
     }
 
     pub async fn check_who_i_am(&mut self) -> Result<(), Error> {
@@ -222,7 +228,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
 
     pub async fn send_sim_start(&mut self) {
         if let Err(e) = self.write_register(0x00, 0x55).await {
-            debug!("SPI Write Error (Data): {:?}", e);
+            #[cfg(feature = "debug")]
+            defmt::debug!("SPI Write Error (Data): {:?}", e);
         }
     }
 
@@ -230,11 +237,11 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         macro_rules! log_reg {
             ($name:expr, $val:expr) => {
                 #[cfg(feature = "debug")]
-                debug!("{}: {:08b}", $name, $val);
+                defmt::debug!("{}: {:08b}", $name, $val);
             };
             ($name:expr, $old:expr, $new:expr) => {
                 #[cfg(feature = "debug")]
-                debug!("{} old: {:08b}, new: {:08b}", $name, $old, $new);
+                defmt::debug!("{} old: {:08b}, new: {:08b}", $name, $old, $new);
             };
         }
         #[cfg(feature = "simulation")]
@@ -490,7 +497,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     /// Applies hardware bias offsets and returns (ch1, ch2) triplets
     pub async fn read_accel_dual_raw(&mut self) -> Result<([i16; 3], [i16; 3]), Error> {
         if self.config.accel.dual_channel == false || self.config.accel.odr == AccelODR::PowerDown {
-            error!(
+            #[cfg(feature = "debug")]
+            defmt::error!(
                 "Dual channel accel reading requested but dual channel mode is disabled or accel is powered down"
             );
             return Err(Error::WrongConfig);
@@ -518,7 +526,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     /// Reads raw acceleration data and applies hardware bias offset
     pub async fn read_accel_raw(&mut self) -> Result<[i16; 3], Error> {
         if self.config.accel.odr == AccelODR::PowerDown {
-            error!("Accel reading requested but accel is powered down");
+            #[cfg(feature = "debug")]
+            defmt::error!("Accel reading requested but accel is powered down");
             return Err(Error::WrongConfig);
         }
         let mut data = [0u8; 6];
@@ -533,7 +542,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     /// Reads raw gyro data and applies hardware bias offset
     pub async fn read_gyro_raw(&mut self) -> Result<[i16; 3], Error> {
         if self.config.gyro.odr == GyroODR::PowerDown {
-            error!("Gyro reading requested but gyro is powered down");
+            #[cfg(feature = "debug")]
+            defmt::error!("Gyro reading requested but gyro is powered down");
             return Err(Error::WrongConfig);
         }
         let mut data = [0u8; 6];
@@ -565,7 +575,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     async fn read_status_reg(&mut self) -> Result<ReadySRC, Error> {
         let status = self.read_register(Register::STATUS_REG as u8).await?;
         #[cfg(feature = "debug")]
-        debug!("status: {}", status);
+        defmt::debug!("status: {}", status);
         Ok(ReadySRC {
             accel: (status & 0b0000_0001) != 0,
             gyro: (status & 0b0000_0010) != 0,
@@ -576,7 +586,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     /// Reads and scales timestamp to ns and applies hardware offset
     pub async fn read_timestamp(&mut self) -> Result<u64, Error> {
         if self.config.general.timestamp_enabled == false {
-            error!("Timestamp reading requested but timestamp is disabled");
+            #[cfg(feature = "debug")]
+            defmt::error!("Timestamp reading requested but timestamp is disabled");
             return Err(Error::NoValue);
         }
         let raw = self.read_timestamp_raw().await?;
@@ -616,20 +627,23 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         delay_us: u64,
     ) -> Option<ReadySRC> {
         if !accel && !gyro && !temp {
-            error!("wait_for_data_ready called with no sensors selected");
+            #[cfg(feature = "debug")]
+            defmt::error!("wait_for_data_ready called with no sensors selected");
             return None;
         }
         if (accel && self.config.accel.odr == AccelODR::PowerDown)
             || (gyro && self.config.gyro.odr == GyroODR::PowerDown)
         {
-            error!("wait_for_data_ready called for powered down sensor");
+            #[cfg(feature = "debug")]
+            defmt::error!("wait_for_data_ready called for powered down sensor");
             return None;
         }
         loop {
             let status = match self.read_status_reg().await {
                 Ok(s) => s,
                 Err(e) => {
-                    error!("Status Register konnte nicht gelesen werden: {:?}", e);
+                    #[cfg(feature = "debug")]
+                    defmt::error!("Status Register konnte nicht gelesen werden: {:?}", e);
                     return None;
                 }
             };
@@ -724,7 +738,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     /// Syncs the internal time reference to the current sensor timestamp.
     /// Sets [`ts_offset`](Self::hw) to align future reads with this point in time.
     pub async fn reset_timer(&mut self) {
-        info!("Resetting timestamp timer");
+        #[cfg(feature = "debug")]
+        defmt::info!("Resetting timestamp timer");
         self.hw.ts_offset = self.read_timestamp_raw().await.unwrap_or(0);
     }
 
@@ -732,7 +747,8 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     /// Builds the configuration bitmask and writes it to the sensor registers.
     pub async fn commit_config(&mut self) {
         if let Err(e) = self.write_config_registers(&self.config.build()).await {
-            error!("Error committing config: {:?}", e);
+            #[cfg(feature = "debug")]
+            defmt::error!("Error committing config: {:?}", e);
         }
         Timer::after_micros(100).await;
     }
@@ -781,16 +797,18 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
             let status = match self.read_fifo_status().await {
                 Ok(s) => s,
                 Err(e) => {
-                    error!("FIFO Status konnte nicht gelesen werden: {:?}", e);
+                    #[cfg(feature = "debug")]
+                    defmt::error!("FIFO Status konnte nicht gelesen werden: {:?}", e);
                     return;
                 }
             };
             #[cfg(feature = "debug")]
-            debug!("{:?}", status);
+            defmt::debug!("{:?}", status);
             match trigger {
                 FifoTrigger::Counter => {
                     if self.config.fifo.counter_threshold == 0 {
-                        error!("No Counter set");
+                        #[cfg(feature = "debug")]
+                        defmt::error!("No Counter set");
                     }
                     if status.counter_reached {
                         return;
@@ -798,7 +816,8 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
                 }
                 FifoTrigger::Watermark => {
                     if self.config.fifo.watermark_threshold == 0 {
-                        error!("No watermark set");
+                        #[cfg(feature = "debug")]
+                        defmt::error!("No watermark set");
                     }
 
                     if status.watermark_reached {
@@ -910,7 +929,8 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
                         return Ok(());
                     } // FIFO leer
                     _ => {
-                        warn!("tag: {}", tag)
+                        #[cfg(feature = "debug")]
+                        defmt::warn!("tag: {}", tag)
                     }
                 }
                 if let Some(sample) = sampler.complete_sample() {
@@ -1020,13 +1040,15 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
         mode: LogicOp,
     ) -> Result<ReadySRC, Error> {
         if !accel && !gyro && !temp {
-            error!("wait_for_data_ready called with no sensors selected");
+            #[cfg(feature = "debug")]
+            defmt::error!("wait_for_data_ready called with no sensors selected");
             return Err(Error::WrongConfig);
         }
         if (accel && self.config.accel.odr == AccelODR::PowerDown)
             || (gyro && self.config.gyro.odr == GyroODR::PowerDown)
         {
-            error!("wait_for_data_ready called for powered down sensor");
+            #[cfg(feature = "debug")]
+            defmt::error!("wait_for_data_ready called for powered down sensor");
             return Err(Error::WrongConfig);
         }
         loop {
@@ -1037,7 +1059,7 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
             }
             let status = self.read_status_reg().await?;
             #[cfg(feature = "debug")]
-            debug!("Level: {:?} => {:?}",self.hw.int1.get_level(), status);
+            defmt::debug!("Level: {:?} => {:?}",self.hw.int1.get_level(), status);
             match mode {
                 LogicOp::AND => {
                     if (!accel || status.accel) && (!gyro || status.gyro) && (!temp || status.temp)
@@ -1127,24 +1149,26 @@ impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Enabled> {
         mode: LogicOp,
     ) -> Result<ReadySRC, Error> {
         if !accel && !gyro && !temp {
-            error!("wait_for_data_ready called with no sensors selected");
+            #[cfg(feature = "debug")]
+            defmt::error!("wait_for_data_ready called with no sensors selected");
             return Err(Error::WrongConfig);
         }
         if (accel && self.config.accel.odr == AccelODR::PowerDown)
             || (gyro && self.config.gyro.odr == GyroODR::PowerDown)
         {
-            error!("wait_for_data_ready called for powered down sensor");
+            #[cfg(feature = "debug")]
+            defmt::error!("wait_for_data_ready called for powered down sensor");
             return Err(Error::WrongConfig);
         }
         loop {
             if self.config.general.interrupt_lvl == false {
                 self.hw.int2.wait_for_high().await;
                 #[cfg(feature = "debug")]
-                debug!("Interrupt erkannt")
+                defmt::debug!("Interrupt erkannt")
             } else {
                 self.hw.int2.wait_for_low().await;
                 #[cfg(feature = "debug")]
-                debug!("Interrupt erkannt")
+                defmt::debug!("Interrupt erkannt")
             }
             let status = self.read_status_reg().await?;
 
