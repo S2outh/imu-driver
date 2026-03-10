@@ -8,20 +8,20 @@ use embassy_stm32::{
     Config, Peri, bind_interrupts,
     exti::{self, ExtiInput},
     gpio::{Level, Output, Pull, Speed},
-    interrupt::typelevel::EXTI9_5,
+    interrupt::typelevel::EXTI15_10,
     mode::Async,
     peripherals, rcc,
     spi::{self, Mode, Phase, Polarity, Spi, mode::Master as Spi_Master},
     time::Hertz,
 };
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
-use embassy_time::Timer;
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 use lsm6dsv32::driver::*;
 use panic_probe as _;
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
-    EXTI9_5 => exti::InterruptHandler<EXTI9_5>;
+    EXTI15_10 => exti::InterruptHandler<EXTI15_10>;
 });
 
 fn get_rcc_config() -> rcc::Config {
@@ -48,7 +48,7 @@ async fn main(spawner: Spawner) {
     info!("Programm gestartet");
 
     let mut spi_config = spi::Config::default();
-    spi_config.frequency = Hertz(500_000);
+    spi_config.frequency = Hertz(3_000_000);
     // CPOL = takt im Ruhezustand (0-> Idle = LOW; 1 -> Idle = HIGH)
     // CPHA = an welcher Flanke werden die Daten gelesen (0-> erste Flanke )
     spi_config.mode = Mode {
@@ -69,70 +69,101 @@ async fn main(spawner: Spawner) {
 
     let cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
 
-    let int1 = ExtiInput::new(p.PA9, p.EXTI9, Pull::Down, Irqs);
+    let int1 = ExtiInput::new(p.PA10, p.EXTI10, Pull::Down, Irqs);
 
-    let int2 = ExtiInput::new(p.PA8, p.EXTI8, Pull::Down, Irqs);
+    let int2 = ExtiInput::new(p.PA11, p.EXTI11, Pull::Down, Irqs);
 
-    let mut lsm = Lsm6dsv32::new(spi, cs, int1, int2).await;
-    lsm.config.use_high_accuracy_mode(HighAccuracyODR::Standard);
-    lsm.config.accel.dual_channel = true;
-    let _ = lsm.config.accel.set_odr(AccelODR::KHz1_92);
+    let mut lsm = Lsm6dsv32::new(spi, cs, int1, int2)
+        .await
+        .enable_interrupt1()
+        .enable_interrupt2();
+    unwrap!(
+        lsm.config
+            .accel
+            .set_mode(AccelOperatingMode::HighPerformance)
+    );
+    unwrap!(lsm.config.gyro.set_mode(GyroOperatingMode::LowPowerMode));
+    //lsm.config.use_high_accuracy_mode(HighAccuracyODR::Standard);
+    lsm.config.accel.dual_channel = false;
+    lsm.config.int1.data_ready_accel = true;
+    let _ = lsm.config.accel.set_odr(AccelODR::Hz30);
+    //let _ = lsm.config.gyro.set_odr(GyroODR::Hz7_5);
     lsm.config.accel.full_scale = AccelFS::G8;
     lsm.config.gyro.full_scale = GyroFS::DPS500;
-    for _ in 0..3 {
-        Timer::after_secs(5).await;
-        lsm.commit_config().await;
-    }
+    lsm.commit_config().await;
     lsm.send_sim_start().await;
 
-    /*
-    loop {
+    let mut sample_count = 0;
+    const MAX_WRONG: usize = 30;
+    let mut wrong_samples = [ImuSample::default(); MAX_WRONG];
+    let mut wrong_stored_count = 0;
+    let mut total_wrong_count = 0;
+    let correct_sample: ImuSample = ImuSample {
+        accel: [2570, 2570, 2570],
+        accel_ch2: [0, 0, 0],
+        gyro: [0, 0, 0],
+        temp: 0,
+        last_ts: 0,
+        delta_ts: 0,
+    };
+    let warm_up_duration = Duration::from_secs(10);
 
-        if let Err(e) = lsm
-            .read_data_when_ready_polling(true, false, false, true, 10, LogicOp::OR, |s_raw| {
-                let s = s_raw.create_f32(scale);
-                info!(
-                    "IMU DATA -> Accel: {:?}, Accel2: {:?} Gyro: {:?}, TS: {}, deltaTS: {}",
-                    s.accel, s.accel_ch2, s.gyro, s.last_ts, s.delta_ts
-                );
-            })
-            .await
-        {
-            error!("Fehler");
+    let _ = with_timeout(warm_up_duration, async {
+        loop {
+            let _ = lsm
+                .read_data_when_ready_interrupt1(true, false, false, false, LogicOp::AND)
+                .await;
         }
+    })
+    .await;
+    info!("Starting measurement for 10 seconds...");
+    let duration = Duration::from_secs(10);
+    let start_time = Instant::now();
 
-         let status = lsm.read_fifo_status().await.unwrap_or_else(|e|{error!("Fehler beim Lesen {:?}",e); FifoStatusSample::from_registers(0,   0)});
-         info!("{}",status.unread_samples)
+    let _ = with_timeout(duration, async {
+        loop {
+            match lsm
+                .read_data_when_ready_interrupt1(true, false, false, false, LogicOp::AND)
+                .await
+            {
+                Ok(sample) => {
+                    if sample.check_sample(&correct_sample) {
+                        sample_count += 1;
+                    } else {
+                        total_wrong_count += 1;
+                        // Nur speichern, wenn noch Platz im Array ist
+                        if wrong_stored_count < MAX_WRONG {
+                            wrong_samples[wrong_stored_count] = sample;
+                            wrong_stored_count += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Fehler beim Lesen der IMU: {:?}", e);
+                }
+            }
+        }
+    })
+    .await;
 
-         let result = lsm.read_timestamp().await.unwrap_or_else(|e|{error!("Fehler beim Lesen {:?}",e); 0});
-         info!("{}",result);
-         Timer::after_millis(500).await;
-
-         lsm.fifo_read_data_polling(FifoTrigger::Counter, 10, false,
-             |se| {
-
-             let s = se.create_f32(scale);
-             //info!("IMU DATA -> Accel: {:?}, Accel2: {:?} Gyro: {:?}, TS: {}, deltaTS: {}", s.accel, s.accel_ch2,s.gyro, s.last_ts, s.delta_ts);
-             },
-             Some(|t| {
-             info!("TEMP UPDATE -> {} °C", temp_f32(t));
-             })
-         ).await.unwrap_or_else(|e| error!("FIFO Error: {:?}", e));
-
+    let elapsed = start_time.elapsed();
+    info!("Finished");
+    info!(
+        "Result: {} correct and {} wrong samples received in {}ms.",
+        sample_count,
+        total_wrong_count,
+        elapsed.as_millis()
+    );
+    if wrong_stored_count > 0 {
+        info!("First {} faulty samples details:", wrong_stored_count);
+        for i in 0..wrong_stored_count {
+            let s = &wrong_samples[i];
+            info!(
+                "Sample {}: Accel: {:?}, Accel2: {:?}",
+                i, s.accel, s.accel_ch2
+            );
+        }
     }
-     */
-}
-
-#[task()]
-pub async fn send_iterupt(pin: Peri<'static, peripherals::PB5>) {
-    let mut sim_int_pin = Output::new(pin, Level::Low, Speed::Medium);
-    info!("Test");
-    loop {
-        Timer::after_secs(5).await;
-        sim_int_pin.set_high();
-        info!("Int-Pin HIGH");
-        Timer::after_millis(100).await;
-        sim_int_pin.set_low();
-        info!("Int-Pin LOW");
-    }
+    let hz = (sample_count as f32) / (elapsed.as_millis() as f32 / 1000.0);
+    info!("Average rate: {} Hz", hz);
 }
