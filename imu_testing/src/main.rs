@@ -5,23 +5,18 @@ use defmt::*;
 use defmt_rtt as _;
 use embassy_executor::{Spawner, task};
 use embassy_stm32::{
-    Config, Peri, bind_interrupts,
-    exti::{self, ExtiInput},
-    gpio::{Level, Output, Pull, Speed},
-    interrupt::typelevel::EXTI15_10,
-    mode::Async,
-    peripherals, rcc,
-    spi::{self, Mode, Phase, Polarity, Spi, mode::Master as Spi_Master},
-    time::Hertz,
+    Config, bind_interrupts, dma, exti::{self, ExtiInput}, gpio::{Level, Output, Pull, Speed}, interrupt::typelevel::{EXTI15_10, SPI1}, mode::Async, peripherals, rcc, spi::{self, Mode, Phase, Polarity, Spi, mode::Master as Spi_Master}, time::Hertz
 };
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
-use embassy_time::{Duration, Instant, Timer, with_timeout};
+use embassy_time::{Duration, Instant, with_timeout};
 use lsm6dsv32::driver::*;
 use panic_probe as _;
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
     EXTI15_10 => exti::InterruptHandler<EXTI15_10>;
+    DMA2_STREAM2 => dma::InterruptHandler<peripherals::DMA2_CH2>;
+    DMA2_STREAM3 => dma::InterruptHandler<peripherals::DMA2_CH3>;
 });
 
 fn get_rcc_config() -> rcc::Config {
@@ -60,7 +55,7 @@ async fn main(spawner: Spawner) {
         StaticCell::new();
 
     let spi = Spi::new(
-        p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA2_CH3, p.DMA2_CH2, spi_config,
+        p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA2_CH3, p.DMA2_CH2, Irqs, spi_config,
     );
 
     let spi_mutex = Mutex::new(spi);

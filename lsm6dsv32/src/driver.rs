@@ -37,8 +37,8 @@ macro_rules! encode_reg8 {
 pub struct Lsm6dsv32HW<'d> {
     spi: &'d Mutex<ThreadModeRawMutex, Spi<'d, Async, Master>>,
     cs: Output<'d>,
-    int1: ExtiInput<'d>,
-    int2: ExtiInput<'d>,
+    int1: ExtiInput<'d, Async>,
+    int2: ExtiInput<'d, Async>,
     bias_accel: [i16; 3],
     bias_accel_ch2: [i16; 3],
     bias_gyro: [i16; 3],
@@ -55,8 +55,8 @@ impl<'d> Lsm6dsv32<'d, FifoDisabled, Int1Disabled, Int2Disabled> {
     pub async fn new(
         spi: &'d Mutex<ThreadModeRawMutex, Spi<'d, Async, Master>>,
         cs: Output<'d>,
-        int1: ExtiInput<'d>,
-        int2: ExtiInput<'d>,
+        int1: ExtiInput<'d, Async>,
+        int2: ExtiInput<'d, Async>,
     ) -> Self {
         let imu_config = ImuConfig::default();
 
