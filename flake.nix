@@ -1,68 +1,81 @@
+
+
 {
-  description = "embassy g0b1 flake";
+  description = "embassy flake";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     fenix = {
-      url = "github:nix-community/fenix";
+      url = "github:nix-community/fenix/monthly";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+    naersk = {
+      url = "github:nix-community/naersk";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.fenix.follows = "fenix";
     };
   };
 
-  outputs = { self, nixpkgs, fenix, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, fenix, naersk }:
     flake-utils.lib.eachDefaultSystem (system:
       let
+        probe-rs-overlay = (final: prev: {
+          probe-rs-tools = prev.probe-rs-tools.overrideAttrs {
+            cargoBuildFeatures = [ "remote" ];
+          };
+        }); 
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ fenix.overlays.default ];
+          overlays = [
+            fenix.overlays.default 
+            probe-rs-overlay 
+          ];
         };
+        profile = pkgs.fenix.complete;
+        std-lib = pkgs.fenix.targets.thumbv7em-none-eabihf.latest;
+        rust-toolchain = pkgs.fenix.combine [
+          profile.rustc-unwrapped
+          profile.rust-src
+          profile.cargo
+          profile.rustfmt
+          profile.clippy
+          std-lib.rust-std
+        ];
       in
       {
         devShells.default =
-        let
-          rust-analyzer = pkgs.fenix.rust-analyzer;
-          toolchain = pkgs.fenix.toolchainOf {
-            channel = "nightly";
-            date = "2025-12-22";
-            sha256 = "sha256-bXz1imrwFz4Z5vlZV4jfRZWwsRma6Sk95IOuTMQFFVU=";
-          };
-          libThumbv6 = pkgs.fenix.targets.thumbv6m-none-eabi.toolchainOf {
-            channel = "nightly";
-            date = "2025-12-22";
-            sha256 = "sha256-bXz1imrwFz4Z5vlZV4jfRZWwsRma6Sk95IOuTMQFFVU=";
-          };
-          libThumbv7 = pkgs.fenix.targets.thumbv7em-none-eabihf.toolchainOf {
-            channel = "nightly";
-            date = "2025-12-22";
-            sha256 = "sha256-bXz1imrwFz4Z5vlZV4jfRZWwsRma6Sk95IOuTMQFFVU=";
-          };
-          rust = pkgs.fenix.combine [
-            toolchain.rustc
-            toolchain.rust-src
-            toolchain.cargo
-            toolchain.rustfmt
-            toolchain.clippy
-            libThumbv6.rust-std
-            libThumbv7.rust-std
-          ];
-        in
         pkgs.mkShell {
           buildInputs = with pkgs; [
-            rust
-            rust-analyzer
+            rust-toolchain
+            rust-analyzer-nightly
+
+            # extra cargo tools
             cargo-edit
+            cargo-expand
 
             # for flashing
             probe-rs-tools
-
-            # for external deps
-            pkg-config
           ];
 
-					# set default defmt log level
-					DEFMT_LOG = "info";
+          # set the rust src for rust_analyzer
+          RUST_SRC_PATH = "${rust-toolchain}/lib/rustlib/src/rust/library";
+          # set default defmt log level
+          DEFMT_LOG = "info";
+        };
+
+        packages.default = 
+        (naersk.lib.${system}.override {
+          cargo = rust-toolchain;
+          rustc = rust-toolchain;
+        }).buildPackage {
+          src = ./.;
+          FW_VERSION = builtins.getEnv "FW_VERSION";
+          FW_HASH    = builtins.getEnv "FW_HASH";
+
+          DEFMT_LOG = "info";
         };
       }
     );
 }
+

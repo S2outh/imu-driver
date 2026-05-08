@@ -229,7 +229,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     pub async fn send_sim_start(&mut self) {
         if let Err(e) = self.write_register(0x00, 0x55).await {
             #[cfg(feature = "debug")]
-            defmt::debug!("SPI Write Error (Data): {:?}", e);
+            defmt::trace!("SPI Write Error (Data): {:?}", e);
         }
     }
 
@@ -237,11 +237,11 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
         macro_rules! log_reg {
             ($name:expr, $val:expr) => {
                 #[cfg(feature = "debug")]
-                defmt::debug!("{}: {:08b}", $name, $val);
+                defmt::trace!("{}: {:08b}", $name, $val);
             };
             ($name:expr, $old:expr, $new:expr) => {
                 #[cfg(feature = "debug")]
-                defmt::debug!("{} old: {:08b}, new: {:08b}", $name, $old, $new);
+                defmt::trace!("{} old: {:08b}, new: {:08b}", $name, $old, $new);
             };
         }
         #[cfg(feature = "simulation")]
@@ -575,7 +575,7 @@ impl<'d, L, I1, I2> Lsm6dsv32<'d, L, I1, I2> {
     async fn read_status_reg(&mut self) -> Result<ReadySRC, Error> {
         let status = self.read_register(Register::STATUS_REG as u8).await?;
         #[cfg(feature = "debug")]
-        defmt::debug!("status: {}", status);
+        defmt::trace!("status: {}", status);
         Ok(ReadySRC {
             accel: (status & 0b0000_0001) != 0,
             gyro: (status & 0b0000_0010) != 0,
@@ -803,7 +803,7 @@ impl<'d, I1, I2> Lsm6dsv32<'d, FifoEnabled, I1, I2> {
                 }
             };
             #[cfg(feature = "debug")]
-            defmt::debug!("{:?}", status);
+            defmt::trace!("{:?}", status);
             match trigger {
                 FifoTrigger::Counter => {
                     if self.config.fifo.counter_threshold == 0 {
@@ -1059,7 +1059,7 @@ impl<'d, FI, I2> Lsm6dsv32<'d, FI, Int1Enabled, I2> {
             }
             let status = self.read_status_reg().await?;
             #[cfg(feature = "debug")]
-            defmt::debug!("Level: {:?} => {:?}",self.hw.int1.get_level(), status);
+            defmt::trace!("Level: {:?} => {:?}",self.hw.int1.get_level(), status);
             match mode {
                 LogicOp::AND => {
                     if (!accel || status.accel) && (!gyro || status.gyro) && (!temp || status.temp)
@@ -1164,11 +1164,11 @@ impl<'d, FI, I1> Lsm6dsv32<'d, FI, I1, Int2Enabled> {
             if self.config.general.interrupt_lvl == false {
                 self.hw.int2.wait_for_high().await;
                 #[cfg(feature = "debug")]
-                defmt::debug!("Interrupt erkannt")
+                defmt::trace!("Interrupt erkannt")
             } else {
                 self.hw.int2.wait_for_low().await;
                 #[cfg(feature = "debug")]
-                defmt::debug!("Interrupt erkannt")
+                defmt::trace!("Interrupt erkannt")
             }
             let status = self.read_status_reg().await?;
 
